@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: RFE Workspaces API
+  version: 0.1.0
+servers:
+  - url: https://api.example.com
+paths:
+  /workspaces:
+    post:
+      summary: Create workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [upstreamRepoUrl, workspaceName]
+              properties:
+                upstreamRepoUrl: { type: string }
+                workspaceName: { type: string }
+      responses:
+        '201': { description: Created }
+  /workspaces/{id}/specify:
+    post:
+      summary: Run Specify on canonical branch
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '202': { description: Accepted }
+  /workspaces/{id}/sessions:
+    post:
+      summary: Start runner session
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [forkUrl]
+              properties:
+                forkUrl: { type: string }
+                inputBranch: { type: string }
+                outputBranch: { type: string }
+      responses:
+        '201': { description: Created }
+  /sessions/{sessionId}/messages:
+    get:
+      summary: Stream or fetch session messages
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }

@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+    "time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,6 +29,9 @@ var (
 	stateBaseDir   string
 	pvcBaseDir     string
 	baseKubeConfig *rest.Config
+    metricsRegistry *prometheus.Registry
+    httpRequestsTotal *prometheus.CounterVec
+    httpRequestDurationSeconds *prometheus.HistogramVec
 )
 
 func main() {
@@ -33,6 +39,30 @@ func main() {
 	if err := initK8sClients(); err != nil {
 		log.Fatalf("Failed to initialize Kubernetes clients: %v", err)
 	}
+
+    // Initialize Prometheus registry and app metrics
+    metricsRegistry = prometheus.NewRegistry()
+    // Default Go and process collectors
+    metricsRegistry.MustRegister(collectors.NewGoCollector())
+    metricsRegistry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+
+    httpRequestsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "http_requests_total",
+            Help: "Total number of HTTP requests processed.",
+        },
+        []string{"method", "path", "status"},
+    )
+    httpRequestDurationSeconds = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "http_request_duration_seconds",
+            Help:    "Duration of HTTP requests in seconds.",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"method", "path", "status"},
+    )
+    metricsRegistry.MustRegister(httpRequestsTotal)
+    metricsRegistry.MustRegister(httpRequestDurationSeconds)
 
 	// Get namespace from environment or use default
 	namespace = os.Getenv("NAMESPACE")
@@ -56,6 +86,27 @@ func main() {
 
 	// Setup Gin router
 	r := gin.Default()
+
+	// Metrics middleware: record count and latency per route
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		statusCode := c.Writer.Status()
+		method := c.Request.Method
+		// Use full path if available (captures :params), fallback to RequestURI
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		labels := prometheus.Labels{
+			"method": method,
+			"path":   path,
+			"status": fmt.Sprintf("%d", statusCode),
+		}
+		httpRequestsTotal.With(labels).Inc()
+		duration := time.Since(start).Seconds()
+		httpRequestDurationSeconds.With(labels).Observe(duration)
+	})
 
 	// Middleware to populate user context from forwarded headers
 	r.Use(forwardedIdentityMiddleware())

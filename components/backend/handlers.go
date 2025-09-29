@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	authnv1 "k8s.io/api/authentication/v1"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -2805,12 +2806,9 @@ func deleteProjectKey(c *gin.Context) {
 
 // Metrics handler - placeholder implementation
 func getMetrics(c *gin.Context) {
-	// TODO: Implement Prometheus metrics
-	metrics := `# HELP agenticsession_total Total number of agentic sessions
-# TYPE agenticsession_total counter
-agenticsession_total 0
-`
-	c.String(http.StatusOK, metrics)
+	// Serve metrics using promhttp with our custom registry
+	h := promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{})
+	h.ServeHTTP(c.Writer, c.Request)
 }
 
 // ========================= Project-scoped RFE Handlers =========================

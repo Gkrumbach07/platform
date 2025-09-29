@@ -24,6 +24,10 @@
   → A: Maintain SSO↔GitHub user mapping with per-user installation id(s).
 - Q: If a session edits both the umbrella repo and a submodule, how many PRs are created?
   → A: Separate PRs per repo (umbrella + each changed submodule).
+ - Q: What happens if a user lacks access to umbrella or submodule repos, and how are forks handled?
+  → A: UI shows access error on browse; offer fork creation if none; sessions allow optional input/output for non‑RFE runs.
+ - Q: Are secrets stored, or do we rely on GitHub App tokens only?
+  → A: Do not store user secrets; use short‑lived GitHub App installation tokens only.
 
 ## User Scenarios & Testing (mandatory)
 
@@ -67,6 +71,12 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
    - Then the UI can display current branch status and recent activity, and can trigger a refresh/sync from upstream.
 
 8. RBAC-gated actions
+9. Access and fork handling
+   - Given a user lacks read access to the umbrella or a submodule,
+   - When they browse files in the UI,
+   - Then an access error is shown and actions are disabled for that repo.
+   - And if the user lacks a fork of the umbrella repo,
+   - Then the UI offers to create a fork before starting a session.
    - Given a user with only view permissions in the project namespace,
    - When they attempt to start a session or run Specify,
    - Then the action is blocked with an authorization error, while repository browsing remains allowed.
@@ -93,7 +103,7 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
 - FR-005: Sessions MUST accept an input repository and branch and an output repository and branch as parameters.
 - FR-006: On session start, the runner MUST sync input repo/branch into its PVC working directory, perform work, and then push changes to the specified output repo/branch.
 - FR-007: Sessions MUST create or use a clearly named session branch (e.g., rfe_<workflowId>/session/<sessionId>) for changes prior to PR creation.
-- FR-008: System MUST create a pull request from the session branch back to the designated upstream branch upon successful push.
+ 
  - FR-008: System MUST create pull requests for each repository changed during a session: one PR to the umbrella upstream canonical branch and separate PRs to each changed submodule’s upstream repository/target branch.
 - FR-009: An umbrella upstream Git repository MUST exist and be authoritative; the system ensures the canonical branch `rfe/{workspaceSlug}` exists, sessions clone from this branch, and session outputs are pushed to user-selected forks for PRs back to upstream.
 - FR-009a: Each workspace MUST bind to exactly one upstream `org/repo` and canonical branch `rfe/{workspaceSlug}`; this binding MUST be immutable post-creation unless an explicit migration process is executed.
@@ -101,38 +111,41 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
 - FR-010: Backend↔Runner MUST support real-time, bidirectional messaging for inputs (prompts, commands) and outputs (logs, events, artifacts metadata).
 - FR-011: All session messages MUST be durably persisted in project object storage under a predictable path.
 - FR-012: The UI MUST reflect the latest upstream state and session outcomes, including branch and PR status, via provider webhooks or periodic sync.
-- FR-013: The system MUST provide a deterministic object storage layout for workflows and sessions.
+- FR-013: The system MUST provide a deterministic object storage layout for sessions.
 - FR-014: Access control MUST be enforced via three Kubernetes roles in each project namespace: `ambient-project-admin`, `ambient-project-edit`, and `ambient-project-view` (see `components/manifests/rbac`).
 - FR-014a: Role capabilities:
   - `ambient-project-admin`: create/delete workspaces; configure storage; set canonical branch; manage credentials policies; run Specify; start/terminate sessions; view all; manage RBAC bindings.
   - `ambient-project-edit`: start sessions; run Specify; view sessions/messages; cannot change storage or RBAC.
   - `ambient-project-view`: view UI, specs, session logs and PR links; cannot mutate.
 - FR-014b: Backend service accounts (`backend-sa`, `operator-sa`) MUST operate with least-privilege ClusterRoles provided under `components/manifests/rbac` for controller actions only.
-- FR-015: Secrets and credentials used for upstream repos or storage MUST be managed securely [NEEDS CLARIFICATION: secret manager, rotation].
+- FR-015: User GitHub credentials MUST NOT be stored. Only short‑lived GitHub App installation tokens are minted per session, injected via ephemeral namespace‑scoped K8s Secrets, and deleted on completion. Storage credentials (e.g., S3) MUST be short‑lived and never persisted.
 - FR-015c: The system MUST obtain per-user GitHub installation tokens via a GitHub App installed by the user on their account; no organization-wide app is required or assumed.
 - FR-015d: The backend MUST maintain a secure mapping of SSO user → {githubUserId, installationId(s), host}; mint short‑lived installation tokens per session, inject only ephemeral tokens into runner Secrets, and never persist long‑lived tokens in namespaces.
 - FR-015a: Submodules under `repos/*` MAY include external third-party repositories; session launch MUST validate user token access to each required submodule and fail fast with actionable diagnostics if access is missing.
-- FR-019: PRs into `rfe/{workspaceSlug}` MUST use merge commits (no squash or rebase) to preserve session branch context; enforce via repository settings and validation.
+- FR-019: PRs into `rfe/{workspaceSlug}` SHOULD use merge commits to preserve session branch context; if repository settings prevent merge commits, the system MUST either fall back to an allowed merge type (squash or rebase) or error clearly with remediation guidance.
 - FR-016: The system MUST provide observable status for sessions (queued, running, succeeded, failed) and messaging health.
-- FR-017: Migration MUST deprecate the content proxy endpoints and shared PVC usage without breaking existing projects; provide a transition path.
 - FR-018: The UI MUST expose project storage selection, validation, and (for managed storage) lifecycle state.
+ - FR-020: The UI MUST display access errors for umbrella/submodule repos when the user lacks permissions and disable file actions for those repos.
+ - FR-021: The system MUST provide a fork creation flow (UI + backend) for the umbrella repo when the user lacks a fork and intends to start a session.
+ - FR-022: The session start API MUST allow optional input/output parameters for sessions not tied to an RFE workspace (defaults may be empty).
+ - FR-023: The system MUST support multiple runner types via a standardized Runner Shell + Adapter interface (e.g., claude, openai, localexec) selectable per session.
+ - FR-024: All runner messaging MUST conform to a common JSON protocol (see runner-shell.md) and be durably persisted to S3/MinIO under `sessions/{sessionId}/messages.json` irrespective of runner type.
+ - FR-024a: Runners MUST support streamed partial messages for large outputs; each message includes `seq` (monotonic), and partial fragments carry `partial.id`, `partial.index`, and `partial.total` to allow client reassembly.
 
 ### Non-Functional Requirements
 - NFR-001: Messaging latency SHOULD target sub-1s p50 for text events at typical load [NEEDS CLARIFICATION: target scale].
 - NFR-002: Storage operations SHOULD be idempotent and resilient to transient failures with retries.
 - NFR-003: Data at rest MUST be encrypted in object storage; data in transit MUST use TLS [NEEDS CLARIFICATION: encryption keys/CMK].
 - NFR-004: The system SHOULD support concurrent sessions at project scale without cross-session interference.
-- NFR-005: Audit logs SHOULD capture session lifecycle events and storage writes for compliance [NEEDS CLARIFICATION: retention period].
-- NFR-006: System components SHOULD emit metrics for success/failure rates, latency, throughput, and storage usage.
+- NFR-005: Retention is customer-managed. The system does not auto-delete session messages or artifacts; bucket owners control lifecycle in S3/MinIO.
+ 
  - NFR-007: When submodules are skipped due to missing access, PR descriptions MUST include a checklist of inaccessible submodules and recommended remediation.
 
 ### Storage Layout (reference)
-- Bucket root: `rfe_workflows/`
-  - `<rfe_workflow_id>/`
-    - `sessions/`
-      - `<session_id>/`
-        - `messages.json` (ordered append-only or paginated messages)
-        - `artifacts/` (optional; session outputs metadata or files)
+- Bucket root: `sessions/`
+  - `<session_id>/`
+    - `messages.json` (ordered append-only or paginated messages)
+    - `artifacts/` (optional; session outputs metadata or files)
 
 ### UI and Synchronization
 - The UI SHOULD display current workflow branch, session branches, and PR links.
@@ -140,11 +153,6 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
 - The UI SHOULD render real-time session messages and gracefully recover from reconnects.
  - The UI SHOULD group and display multiple PRs per session (umbrella + submodules), showing per-repo status and combined session status.
  - The UI SHOULD reflect RBAC: disable or hide actions a user cannot perform based on `view`/`edit`/`admin` role resolution.
-
-### Backward Compatibility & Migration
-- Provide a controlled migration path to move existing workflows from shared PVC messaging to object storage + real-time messaging.
-- Maintain read-only access to prior content where feasible during transition.
-- Communicate deprecation timelines and required user actions.
 
 ### Open Questions / Clarifications
 - Storage quotas, HA characteristics, and backup/restore expectations for managed object storage.
@@ -164,6 +172,7 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
 - BranchReference: Specific branch names for input and output operations.
 - Message: A discrete event exchanged between backend/UI and runner during a session, persisted to storage.
 - PullRequestLink: Reference to the created PR for session outputs.
+ - RunnerType: The adapter identifier for a session (e.g., "claude", "openai", "localexec").
 
 ---
 
@@ -177,7 +186,7 @@ As a product engineering team member, I want RFE workflows to use reliable two-w
 
 ### Requirement Completeness
 - [ ] No unresolved [NEEDS CLARIFICATION] markers
-- [ ] Requirements are testable and unambiguous
+- [ ] Requirements are testable and unambiguous  
 - [ ] Success criteria are measurable
 - [ ] Scope is clearly bounded
 - [ ] Dependencies and assumptions identified

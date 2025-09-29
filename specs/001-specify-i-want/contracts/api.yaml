@@ -1,13 +1,113 @@
 openapi: 3.0.3
 info:
   title: RFE Workspaces API
-  version: 0.1.0
+  version: 0.3.1
 servers:
-  - url: https://api.example.com
+  - url: /api
 paths:
-  /workspaces:
+  /projects/{projectName}/auth/github/install:
     post:
-      summary: Create workspace
+      summary: Link SSO user to GitHub installation (per-user App)
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [installationId]
+              properties:
+                installationId: { type: integer }
+      responses:
+        '200': { description: Linked }
+  /projects/{projectName}/users/forks:
+    get:
+      summary: List user forks for an upstream repo (RBAC-scoped)
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+        - in: query
+          name: upstreamRepo
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create a fork of the upstream umbrella repo for the user
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [upstreamRepo]
+              properties:
+                upstreamRepo: { type: string }
+      responses:
+        '202': { description: Fork creation requested }
+  /projects/{projectName}/repo/tree:
+    get:
+      summary: Fetch repo tree entries via backend proxy
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+        - in: query
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: query
+          name: ref
+          required: true
+          schema: { type: string }
+        - in: query
+          name: path
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+  /projects/{projectName}/repo/blob:
+    get:
+      summary: Fetch blob (text) via backend proxy
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+        - in: query
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: query
+          name: ref
+          required: true
+          schema: { type: string }
+        - in: query
+          name: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+  /projects/{projectName}/rfe-workflows:
+    post:
+      summary: Create workspace (RFE workflow) in project
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -20,20 +120,28 @@ paths:
                 workspaceName: { type: string }
       responses:
         '201': { description: Created }
-  /workspaces/{id}/specify:
+  /projects/{projectName}/rfe-workflows/{id}/specify:
     post:
-      summary: Run Specify on canonical branch
+      summary: Run Specify on canonical branch (using invoking user token)
       parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
         '202': { description: Accepted }
-  /workspaces/{id}/sessions:
+  /projects/{projectName}/rfe-workflows/{id}/sessions:
     post:
-      summary: Start runner session
+      summary: Start runner session for workflow (select runner type)
       parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
         - in: path
           name: id
           required: true
@@ -44,20 +152,44 @@ paths:
           application/json:
             schema:
               type: object
-              required: [forkUrl]
               properties:
+                runnerType:
+                  type: string
+                  enum: [claude, openai, localexec]
                 forkUrl: { type: string }
+                inputRepo: { type: string }
                 inputBranch: { type: string }
+                outputRepo: { type: string }
                 outputBranch: { type: string }
+              description: forkUrl is required for RFE sessions; input/output may be optional for non‑RFE sessions
       responses:
         '201': { description: Created }
-  /sessions/{sessionId}/messages:
-    get:
-      summary: Stream or fetch session messages
+  /projects/{projectName}/sessions/{sessionId}/prs:
+    post:
+      summary: Create PRs for changed repositories (umbrella + submodules)
       parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string }
+      responses:
+        '202': { description: Accepted }
+  /projects/{projectName}/sessions/{sessionId}/messages:
+    get:
+      summary: Stream or fetch session messages (from S3; supports partial fragments)
+      parameters:
+        - in: path
+          name: projectName
+          required: true
+          schema: { type: string }
         - in: path
           name: sessionId
           required: true
           schema: { type: string }
       responses:
         '200': { description: OK }
+  

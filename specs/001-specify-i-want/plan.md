@@ -18,12 +18,12 @@
 ```
 
 ## Summary
-Use an upstream umbrella repo per workspace with canonical branch `rfe/{workspaceSlug}`. Specify writes to `specs/{SPECIFY_FEATURE}` on canonical using the invoking user’s GitHub App installation token. Sessions clone upstream canonical, push to user forks, and open PRs to canonical; changes to submodules create separate PRs per repo. Messaging is over WebSocket with durable logs in S3; UI browses upstream via backend proxy; RBAC uses ambient-project view/edit/admin.
+Use an upstream umbrella repo per workspace with canonical branch `rfe/{workspaceSlug}`. Specify writes to `specs/{SPECIFY_FEATURE}` on canonical using the invoking user’s GitHub App installation token. Sessions clone upstream canonical, push to user forks, and open PRs to canonical; changes to submodules create separate PRs per repo. Prefer merge commits; if repo settings disallow, fall back to an allowed type or error with guidance. Messaging is over WebSocket with durable logs in S3; supports streamed partial messages for large outputs; UI browses upstream via backend proxy; RBAC uses ambient-project view/edit/admin.
 
 ## Technical Context
 **Language/Version**: Go (backend), TypeScript/Next.js (frontend)  
 **Primary Dependencies**: GitHub API, WebSockets, S3/MinIO, Kubernetes  
-**Storage**: S3/MinIO for session messages/artifacts  
+**Storage**: S3/MinIO for session messages/artifacts (sessions/*)  
 **Testing**: go test, jest/vitest (frontend)  
 **Target Platform**: OpenShift/Kubernetes  
 **Project Type**: web (frontend + backend + operator)  
@@ -63,7 +63,8 @@ components/
     claude-code-runner/
 ```
 
-**Structure Decision**: Extend backend (Go) for OAuth/GitHub App install-token flow, session orchestration, PR creation, and WS; frontend for repo browsing and session UX; manifests for RBAC alignment.
+**Structure Decision**: Extend backend (Go) for per-user GitHub App installation-token flow (SSO↔GitHub mapping), session orchestration, PR creation, and WS; frontend for repo browsing and session UX; manifests for RBAC alignment.
+Add Runner Shell + Adapter in runners to standardize messaging and support multiple runner types.
 
 ## Phase 0: Outline & Research
 See research.md (created): decisions on auth, messaging, merge policy, and submodules.
@@ -72,6 +73,7 @@ See research.md (created): decisions on auth, messaging, merge policy, and submo
 - Entities captured in data-model.md.
 - Core endpoints in contracts/api.yaml.
 - Quickstart outlines operational steps.
+ - Runner shell design: see runner-shell.md (Shell + Adapter, protocol, transports, sink).
 
 ## Phase 2: Task Planning Approach
 - Derive tasks from contracts and data model; create tasks.md in /tasks phase.

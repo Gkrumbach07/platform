@@ -24,6 +24,7 @@
 - status: enum [queued, running, succeeded, failed]
 - flags: array ["incomplete-submodules"]
 - prLinks: array<PRLink>
+- runnerType: string (enum: claude, openai, localexec)
 - startedAt: datetime
 - finishedAt: datetime|null
 
@@ -36,7 +37,7 @@
 
 ### StorageMessageLog
 - sessionId: string → Session.id
-- s3Path: string (rfe_workflows/{workspaceId}/sessions/{sessionId}/messages.json)
+- s3Path: string (sessions/{sessionId}/messages.json)
 - messageCount: int
 - lastUpdated: datetime
 

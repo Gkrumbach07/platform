@@ -20,12 +20,12 @@
    - Push to user fork and open PR to canonical.
 
 ## Start a session
-1. Select fork target and confirm submodule access.
+1. Select runner type (claude/openai/localexec), fork target, and confirm submodule access.
 2. Runner mounts PVC, clones upstream canonical, updates submodules.
 3. Create session branches per changed repo (umbrella + submodules).
 4. Commit and push to user fork(s).
 5. Open PRs: one for umbrella canonical, one per changed submodule.
-6. Messages stream via WS and persist to S3.
+6. Messages stream via WS and persist to S3; large outputs arrive as partial fragments and are reassembled by the UI.
 
 ## Review and merge
 - Review PRs in upstream repos.

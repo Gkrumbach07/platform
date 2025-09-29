@@ -38,9 +38,14 @@ T006. Implement session start API (POST /workspaces/{id}/sessions)
 - Create per-session Secret with git creds; launch runner job; record session
 - Dependency: T002, T004
 
-T007. WebSocket messaging channel backend↔runner
+T006a. Optional I/O + runnerType for sessions
 - Path: components/backend/
-- Two-way stream; append messages to S3
+- Allow inputRepo/inputBranch/outputRepo/outputBranch to be omitted; set sensible defaults; accept runnerType
+- Dependency: T006
+
+T007. WebSocket messaging channel backend↔runner (S3 sessions/* layout, streaming partials)
+- Path: components/backend/
+- Two-way stream; append messages to S3 at sessions/{sessionId}/messages.json; support partial fragments with {partial.id,index,total} and monotonic seq for reassembly
 - Dependency: T006
 
 T008. PR creation logic per repo (umbrella + submodules)
@@ -48,14 +53,24 @@ T008. PR creation logic per repo (umbrella + submodules)
 - Detect changed repos; create forks/branches as needed; open PRs per repo
 - Dependency: T006
 
+T008a. Submodule access validation at session start
+- Path: components/backend/
+- Check user token for each required submodule; flag `incomplete-submodules` and checklist
+- Dependency: T006
+
 T009. UI: Connect GitHub and fork selector
 - Path: components/frontend/
 - Flow to install app, show user forks, choose push target
 - Dependency: T001
 
+T009a. UI: Create fork action
+- Path: components/frontend/
+- Offer fork creation when missing; call POST /projects/{projectName}/users/forks
+- Dependency: T009
+
 T010. UI: Repo browser (tree/blob, submodules)
 - Path: components/frontend/
-- Backend-proxied GitHub API; ETag caching; submodule resolution
+- Backend-proxied GitHub API; ETag caching; submodule resolution; show access errors
 - Dependency: T004
 
 T011. UI: Sessions dashboard with grouped PRs
@@ -80,7 +95,7 @@ T014. Quickstart: validation steps [P]
 
 T015. Backend tests: contract tests for APIs
 - Path: components/backend/
-- Tests for workspace create, specify run, session start, messages
+- Tests for workspace create, specify run, session start, messages, forks
 - Dependency: T012
 
 T016. Backend: implement endpoints per contracts
@@ -92,6 +107,16 @@ T017. Runner: session script updates
 - Path: components/runners/claude-code-runner/
 - Clone upstream canonical; create per-repo branches; push; send PR intents
 - Dependency: T006, T008
+
+T017a. Scaffold runner-shell package
+- Path: components/runners/runner-shell/
+- Create core (shell, protocol, transport_ws, sink_s3, context), adapters/claude, cli, tests
+- Dependency: None
+
+T017b. Wrap claude runner as adapter
+- Path: components/runners/claude-code-runner/
+- Refactor to implement adapters/claude/adapter.py hooks and invoke via shell CLI
+- Dependency: T017a
 
 T018. Observability: metrics and audit logs
 - Path: components/backend/
@@ -108,9 +133,14 @@ T020. Performance hardening and rate-limit handling
 - ETag caching; retries/backoff; pagination
 - Dependency: T016
 
+T021. Prefer merge commits; fallback or error with guidance
+- Path: components/backend/
+- Attempt merge commit; if disabled, fall back to allowed type (squash/rebase) or error clearly with remediation steps
+- Dependency: T016
+
 ## Parallel groups
 - Group A [P]: T012, T013, T014, T019
 - Group B [P]: T009 after T001; T010 after T004
 
 ## Done criteria
-- All endpoints pass contract tests; sessions open PRs per repo; WS stable with persisted logs; UI shows grouped PRs; RBAC enforced; documentation updated.
+- All endpoints pass contract tests; sessions open PRs per repo; WS stable with persisted logs; UI shows grouped PRs; RBAC enforced; storage selection integrated; merge policy enforced; fork create option present; non‑RFE sessions supported.

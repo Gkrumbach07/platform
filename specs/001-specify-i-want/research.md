@@ -6,7 +6,8 @@
 - Canonical branch: `rfe/{workspaceSlug}` on umbrella upstream repo.
 - Specify writes: to `specs/{SPECIFY_FEATURE}` on canonical; if no upstream write, push to user fork and open PR.
 - Sessions: clone upstream canonical; push to user fork session branch; PR back to canonical. For submodules, separate PRs per repo.
-- Messaging: WebSocket backend↔runner; persist messages to S3 `rfe_workflows/{id}/sessions/{id}/messages.json`.
+- Messaging: WebSocket backend↔runner; persist messages to S3 `sessions/{id}/messages.json`; support streamed partial messages with client-side reassembly.
+- Runner Shell: abstract messaging/persistence; adapters implement hooks (claude, openai, localexec).
 - Storage: S3/MinIO only for messages/artifacts (no repo mirror).
 - Merge policy: merge commits into canonical (no squash/rebase).
 

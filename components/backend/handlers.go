@@ -3034,6 +3034,55 @@ func listProjectRFEWorkflows(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"workflows": summaries})
 }
 
+// validateBranchAvailability checks if a branch exists in any of the provided repositories
+func validateBranchAvailability(c *gin.Context) {
+	project := c.Param("projectName")
+	var req ValidateBranchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Get GitHub token for authentication
+	reqK8s, reqDyn := getK8sClientsForRequest(c)
+	userID, _ := c.Get("userID")
+	userIDStr, _ := userID.(string)
+
+	githubToken, err := getGitHubToken(context.TODO(), reqK8s, reqDyn, project, userIDStr)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "GitHub authentication required", "message": err.Error()})
+		return
+	}
+
+	// Check each repository for branch existence
+	conflictingRepos := []string{}
+	for _, repoURL := range req.RepoUrls {
+		exists, err := checkBranchExists(repoURL, req.BranchName, githubToken)
+		if err != nil {
+			log.Printf("Error checking branch %s in %s: %v", req.BranchName, repoURL, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to check branch in %s: %v", repoURL, err)})
+			return
+		}
+		if exists {
+			conflictingRepos = append(conflictingRepos, repoURL)
+		}
+	}
+
+	if len(conflictingRepos) > 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"available": false,
+			"message":   fmt.Sprintf("Branch '%s' already exists in: %s", req.BranchName, strings.Join(conflictingRepos, ", ")),
+			"conflicts": conflictingRepos,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"available": true,
+		"message":   fmt.Sprintf("Branch '%s' is available", req.BranchName),
+	})
+}
+
 func createProjectRFEWorkflow(c *gin.Context) {
 	project := c.Param("projectName")
 	var req CreateRFEWorkflowRequest
@@ -3043,12 +3092,63 @@ func createProjectRFEWorkflow(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed: " + err.Error()})
 		return
 	}
+
+	// Get GitHub token for branch creation
+	reqK8s, reqDyn := getK8sClientsForRequest(c)
+	if reqK8s == nil || reqDyn == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	userID, _ := c.Get("userID")
+	userIDStr, _ := userID.(string)
+
+	githubToken, err := getGitHubToken(c.Request.Context(), reqK8s, reqDyn, project, userIDStr)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "GitHub authentication required", "message": err.Error()})
+		return
+	}
+
+	// Create feature branches on all repos if featureBranch is specified
+	if req.FeatureBranch != "" {
+		log.Printf("Creating feature branch '%s' on all repositories", req.FeatureBranch)
+
+		// Create branch on umbrella repo
+		sourceBranch := "main"
+		if req.UmbrellaRepo.Branch != nil && *req.UmbrellaRepo.Branch != "" {
+			sourceBranch = *req.UmbrellaRepo.Branch
+		}
+
+		log.Printf("Creating branch %s on umbrella repo %s from %s", req.FeatureBranch, req.UmbrellaRepo.URL, sourceBranch)
+		if err := createFeatureBranch(c.Request.Context(), req.UmbrellaRepo.URL, sourceBranch, req.FeatureBranch, githubToken); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create branch on umbrella repo: %v", err)})
+			return
+		}
+
+		// Create branch on supporting repos
+		for i, repo := range req.SupportingRepos {
+			sourceBranch := "main"
+			if repo.Branch != nil && *repo.Branch != "" {
+				sourceBranch = *repo.Branch
+			}
+
+			log.Printf("Creating branch %s on supporting repo %d (%s) from %s", req.FeatureBranch, i, repo.URL, sourceBranch)
+			if err := createFeatureBranch(c.Request.Context(), repo.URL, sourceBranch, req.FeatureBranch, githubToken); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create branch on supporting repo %s: %v", repo.URL, err)})
+				return
+			}
+		}
+
+		log.Printf("Successfully created feature branch '%s' on all repositories", req.FeatureBranch)
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	workflowID := fmt.Sprintf("rfe-%d", time.Now().Unix())
 	workflow := &RFEWorkflow{
 		ID:              workflowID,
 		Title:           req.Title,
 		Description:     req.Description,
+		FeatureBranch:   req.FeatureBranch,
 		UmbrellaRepo:    &req.UmbrellaRepo,
 		SupportingRepos: req.SupportingRepos,
 		WorkspacePath:   req.WorkspacePath,
@@ -3056,7 +3156,6 @@ func createProjectRFEWorkflow(c *gin.Context) {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	_, reqDyn := getK8sClientsForRequest(c)
 	if err := upsertProjectRFEWorkflowCR(reqDyn, workflow); err != nil {
 		log.Printf("⚠️ Failed to upsert RFEWorkflow CR: %v", err)
 	}
@@ -3137,7 +3236,7 @@ func seedProjectRFEWorkflow(c *gin.Context) {
 		specKitTemplate = "spec-kit-template-claude-sh"
 	}
 
-	// Perform seeding operations
+	// Perform seeding operations (feature branches already created during RFE creation)
 	seedErr := performRepoSeeding(c.Request.Context(), wf, githubToken, agentURL, agentBranch, agentPath, specKitVersion, specKitTemplate)
 
 	if seedErr != nil {

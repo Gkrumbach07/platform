@@ -226,6 +226,74 @@ func checkGitHubPathExists(ctx context.Context, owner, repo, branch, path, token
 	return false, fmt.Errorf("GitHub API error: %s (body: %s)", resp.Status, string(body))
 }
 
+// checkBranchExists checks if a branch exists in a remote repository
+func checkBranchExists(repoURL, branchName, githubToken string) (bool, error) {
+	// Inject token into URL for authentication
+	authenticatedURL, err := injectGitHubToken(repoURL, githubToken)
+	if err != nil {
+		return false, fmt.Errorf("failed to prepare repo URL: %w", err)
+	}
+
+	// Use git ls-remote to check if branch exists
+	cmd := exec.Command("git", "ls-remote", "--heads", authenticatedURL, fmt.Sprintf("refs/heads/%s", branchName))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If command fails, assume it's an auth or network issue
+		return false, fmt.Errorf("git ls-remote failed: %w (output: %s)", err, string(output))
+	}
+
+	// If output is not empty, branch exists
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// createFeatureBranch creates a new branch in a repository based on the source branch
+func createFeatureBranch(ctx context.Context, repoURL, sourceBranch, featureBranch, githubToken string) error {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "branch-create-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Inject token into URL
+	authenticatedURL, err := injectGitHubToken(repoURL, githubToken)
+	if err != nil {
+		return fmt.Errorf("failed to prepare repo URL: %w", err)
+	}
+
+	// Clone with single branch
+	log.Printf("Cloning %s (branch: %s) to create feature branch %s", repoURL, sourceBranch, featureBranch)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", sourceBranch, "--single-branch", authenticatedURL, tempDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to clone repo: %w (output: %s)", err, string(out))
+	}
+
+	// Configure git user
+	cmd = exec.CommandContext(ctx, "git", "-C", tempDir, "config", "user.email", "vteam-bot@ambient-code.io")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("Warning: failed to set git user.email: %v (output: %s)", err, string(out))
+	}
+	cmd = exec.CommandContext(ctx, "git", "-C", tempDir, "config", "user.name", "vTeam Bot")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("Warning: failed to set git user.name: %v (output: %s)", err, string(out))
+	}
+
+	// Create and checkout new branch
+	cmd = exec.CommandContext(ctx, "git", "-C", tempDir, "checkout", "-b", featureBranch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create branch: %w (output: %s)", err, string(out))
+	}
+
+	// Push new branch to origin
+	cmd = exec.CommandContext(ctx, "git", "-C", tempDir, "push", "-u", "origin", featureBranch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to push branch: %w (output: %s)", err, string(out))
+	}
+
+	log.Printf("Successfully created and pushed branch %s in %s", featureBranch, repoURL)
+	return nil
+}
+
 // performRepoSeeding performs the actual seeding operations
 func performRepoSeeding(ctx context.Context, wf *RFEWorkflow, githubToken, agentURL, agentBranch, agentPath, specKitVersion, specKitTemplate string) error {
 	// Create temp directories

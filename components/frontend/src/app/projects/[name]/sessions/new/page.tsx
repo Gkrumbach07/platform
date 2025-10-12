@@ -124,16 +124,17 @@ export default function NewProjectSessionPage({ params }: { params: Promise<{ na
         if (!resp.ok) return;
         const workflow = await resp.json();
         
-        // Prefill repos from RFE workflow (umbrella + supporting)
+        // Prefill repos from RFE workflow: clone from main, push to feature branch
         if (workflow.umbrellaRepo) {
+          const featureBranch = workflow.featureBranch || workflow.umbrellaRepo.branch || "main";
           const repos = [
             {
               input: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch || "main" },
-              output: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch || "main" }
+              output: { url: workflow.umbrellaRepo.url, branch: featureBranch }
             },
             ...((workflow.supportingRepos || []).map((r: { url: string; branch?: string }) => ({
               input: { url: r.url, branch: r.branch || "main" },
-              output: { url: r.url, branch: r.branch || "main" }
+              output: { url: r.url, branch: featureBranch }
             })))
           ];
           form.setValue("repos", repos);

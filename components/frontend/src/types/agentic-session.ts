@@ -205,6 +205,7 @@ export type RFEWorkflow = {
 	id: string;
 	title: string;
 	description: string;
+	featureBranch?: string; // Feature branch name for this RFE
   currentPhase?: WorkflowPhase; // derived in UI
   status?: "active" | "completed" | "failed" | "paused"; // derived in UI
   // New CRD-aligned repo fields
@@ -222,6 +223,7 @@ export type RFEWorkflow = {
 export type CreateRFEWorkflowRequest = {
 	title: string;
 	description: string;
+	featureBranch: string;
   umbrellaRepo: GitRepository;
   supportingRepos?: GitRepository[];
   workspacePath?: string;

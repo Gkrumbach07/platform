@@ -419,16 +419,17 @@ export default function ProjectRFEDetailPage() {
                                               "rfe-expected": expected,
                                             },
                                           };
-                                        // Wire unified repos[] for chat session (input + output same repo for RFE sessions)
+                                        // Wire unified repos[] for RFE session: clone from main, push to feature branch
                                         if (workflow.umbrellaRepo) {
+                                          const featureBranch = (workflow as any).featureBranch || workflow.umbrellaRepo.branch;
                                           const repos = [
                                             { 
-                                              input: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch },
-                                              output: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch }
+                                              input: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch || "main" },
+                                              output: { url: workflow.umbrellaRepo.url, branch: featureBranch }
                                             },
                                             ...((workflow.supportingRepos || []).map((r) => ({ 
-                                              input: { url: r.url, branch: r.branch },
-                                              output: { url: r.url, branch: r.branch }
+                                              input: { url: r.url, branch: r.branch || "main" },
+                                              output: { url: r.url, branch: featureBranch }
                                             })))
                                           ];
                                           payload.repos = repos;
@@ -485,16 +486,17 @@ export default function ProjectRFEDetailPage() {
                                             "rfe-expected": expected,
                                           },
                                         };
-                                        // Wire unified repos[] for non-interactive generation (input + output same repo for RFE sessions)
+                                        // Wire unified repos[] for RFE session: clone from main, push to feature branch
                                         if (workflow.umbrellaRepo) {
+                                          const featureBranch = (workflow as any).featureBranch || workflow.umbrellaRepo.branch;
                                           const repos = [
                                             { 
-                                              input: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch },
-                                              output: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch }
+                                              input: { url: workflow.umbrellaRepo.url, branch: workflow.umbrellaRepo.branch || "main" },
+                                              output: { url: workflow.umbrellaRepo.url, branch: featureBranch }
                                             },
                                             ...((workflow.supportingRepos || []).map((r) => ({ 
-                                              input: { url: r.url, branch: r.branch },
-                                              output: { url: r.url, branch: r.branch }
+                                              input: { url: r.url, branch: r.branch || "main" },
+                                              output: { url: r.url, branch: featureBranch }
                                             })))
                                           ];
                                           payload.repos = repos;
@@ -511,7 +513,14 @@ export default function ProjectRFEDetailPage() {
                                           body: JSON.stringify(payload),
                                         });
                                         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                                        await Promise.all([load(), loadSessions()]);
+                                        const sessionData = await resp.json();
+                                        const sessionName = sessionData?.metadata?.name || sessionData?.name;
+                                        if (sessionName) {
+                                          // Navigate to the session's messages tab
+                                          window.location.href = `/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(sessionName)}?tab=messages&backHref=${encodeURIComponent(`/projects/${encodeURIComponent(project)}/rfe/${encodeURIComponent(id)}?tab=overview`)}&backLabel=${encodeURIComponent('Back to RFE')}`;
+                                        } else {
+                                          await Promise.all([load(), loadSessions()]);
+                                        }
                                       } catch (e) {
                                         setError(e instanceof Error ? e.message : "Failed to start session");
                                       } finally {

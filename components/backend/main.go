@@ -160,6 +160,7 @@ func main() {
 			// RFE workflow endpoints (project-scoped)
 			projectGroup.GET("/rfe-workflows", listProjectRFEWorkflows)
 			projectGroup.POST("/rfe-workflows", createProjectRFEWorkflow)
+			projectGroup.POST("/rfe-workflows/validate-branch", validateBranchAvailability)
 			projectGroup.GET("/rfe-workflows/:id", getProjectRFEWorkflow)
 			projectGroup.GET("/rfe-workflows/:id/summary", getProjectRFEWorkflowSummary)
 			projectGroup.DELETE("/rfe-workflows/:id", deleteProjectRFEWorkflow)
@@ -409,6 +410,7 @@ type RFEWorkflow struct {
 	ID              string             `json:"id"`
 	Title           string             `json:"title"`
 	Description     string             `json:"description"`
+	FeatureBranch   string             `json:"featureBranch,omitempty"`
 	UmbrellaRepo    *GitRepository     `json:"umbrellaRepo,omitempty"`
 	SupportingRepos []GitRepository    `json:"supportingRepos,omitempty"`
 	Project         string             `json:"project,omitempty"`
@@ -426,9 +428,15 @@ type WorkflowJiraLink struct {
 type CreateRFEWorkflowRequest struct {
 	Title           string          `json:"title" binding:"required"`
 	Description     string          `json:"description" binding:"required"`
+	FeatureBranch   string          `json:"featureBranch" binding:"required"`
 	UmbrellaRepo    GitRepository   `json:"umbrellaRepo"`
 	SupportingRepos []GitRepository `json:"supportingRepos,omitempty"`
 	WorkspacePath   string          `json:"workspacePath,omitempty"`
+}
+
+type ValidateBranchRequest struct {
+	BranchName string   `json:"branchName" binding:"required"`
+	RepoUrls   []string `json:"repoUrls" binding:"required"`
 }
 
 type AdvancePhaseRequest struct {

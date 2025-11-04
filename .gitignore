@@ -118,3 +118,5 @@ Thumbs.db
 .stories/
 .testplans/
 .spikes/
+components/backend/Dockerfile.local-build
+components/backend/BUILD*.md

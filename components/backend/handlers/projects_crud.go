@@ -235,8 +235,7 @@ func CreateProject(c *gin.Context) {
 			}
 
 			// Update Project annotations with display metadata
-			unstruct := projObj // Reference to unstructured object
-			meta, ok := unstruct.Object["metadata"].(map[string]interface{})
+			meta, ok := GetMetadataMap(projObj)
 			if !ok || meta == nil {
 				meta = map[string]interface{}{}
 				projObj.Object["metadata"] = meta

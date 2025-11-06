@@ -25,7 +25,6 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PageHeader } from "@/components/page-header";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { GitHubConnectionCard } from "@/components/github-connection-card";
-import type { FileTreeNode } from "@/components/file-tree";
 
 import type { SessionMessage } from "@/types";
 import type { MessageObject, ToolUseMessages, ToolUseBlock, ToolResultBlock } from "@/types/agentic-session";
@@ -39,10 +38,6 @@ import {
   useDeleteSession,
   useSendChatMessage,
   useSendControlMessage,
-  usePushSessionToGitHub,
-  useAbandonSessionChanges,
-  useWorkspaceList,
-  useWriteWorkspaceFile,
   useAllSessionGitHubDiffs,
   useSessionK8sResources,
   useContinueSession,
@@ -54,12 +49,10 @@ import {
   useCreateRfeWorkflow,
   useGitHubStatus,
   useWorkflowArtifacts,
-  workspaceKeys,
   rfeKeys,
 } from "@/services/queries";
 import { useSecretsValues } from "@/services/queries/use-secrets";
 import { successToast, errorToast } from "@/hooks/use-toast";
-import { workspaceApi } from "@/services/api";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function ProjectSessionDetailPage({
@@ -124,7 +117,6 @@ export default function ProjectSessionDetailPage({
   const continueMutation = useContinueSession();
   const sendChatMutation = useSendChatMessage();
   const sendControlMutation = useSendControlMessage();
-  const writeWorkspaceFileMutation = useWriteWorkspaceFile();
   
   // Get RFE workflow ID from session if this is an RFE session
   const rfeWorkflowId = session?.metadata?.labels?.['rfe-workflow'];
@@ -147,41 +139,7 @@ export default function ProjectSessionDetailPage({
     rfeWorkflowId || ''
   );
 
-  // Workspace state
-  const [wsTree, setWsTree] = useState<FileTreeNode[]>([]);
-  
-  // Helper to convert absolute workspace path to relative path
-  const toRelativePath = useCallback((absPath: string): string => {
-    // Strip /sessions/<sessionName>/workspace/ prefix to get relative path
-    const prefix = `/sessions/${sessionName}/workspace/`;
-    if (absPath.startsWith(prefix)) {
-      return absPath.substring(prefix.length);
-    }
-    // If no prefix, assume it's already relative
-    return absPath;
-  }, [sessionName]);
-  
-  // Fetch workspace root directory
-  const { data: workspaceItems = [] } = useWorkspaceList(
-    projectName,
-    sessionName,
-    undefined,
-    { enabled: true }
-  );
-
-  // Update tree when workspace items change
-  useEffect(() => {
-    if (workspaceItems.length > 0) {
-      const treeNodes: FileTreeNode[] = workspaceItems.map(item => ({
-        name: item.name,
-        path: item.path, // Keep the original path for display/reference
-        type: item.isDir ? 'folder' : 'file',
-        expanded: false,
-        sizeKb: item.isDir ? undefined : item.size / 1024,
-      }));
-      setWsTree(treeNodes);
-    }
-  }, [workspaceItems]);
+  // Workspace state - removed unused tree/file management code
 
   // Handler to refresh spec repository artifacts
   const handleRefreshArtifacts = useCallback(async () => {

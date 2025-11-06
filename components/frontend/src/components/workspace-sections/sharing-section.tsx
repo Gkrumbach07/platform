@@ -52,7 +52,7 @@ type SharingSectionProps = {
 };
 
 export function SharingSection({ projectName }: SharingSectionProps) {
-  const { data: permissions = [], isLoading, error, refetch } = useProjectPermissions(projectName);
+  const { data: permissions = [], isLoading, refetch } = useProjectPermissions(projectName);
   const addPermissionMutation = useAddProjectPermission();
   const removePermissionMutation = useRemoveProjectPermission();
 

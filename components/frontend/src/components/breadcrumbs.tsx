@@ -7,7 +7,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type BreadcrumbItem = {
@@ -19,14 +19,12 @@ export type BreadcrumbItem = {
 export type BreadcrumbsProps = {
   items: BreadcrumbItem[];
   className?: string;
-  showHome?: boolean;
   separator?: React.ReactNode;
 };
 
 export function Breadcrumbs({
   items,
   className,
-  showHome = true,
   separator = <ChevronRight className="h-4 w-4" />,
 }: BreadcrumbsProps) {
   // Temporarily hiding Home from breadcrumbs
@@ -76,7 +74,7 @@ export function Breadcrumbs({
 /**
  * Compact breadcrumbs that collapse middle items on mobile
  */
-export function CompactBreadcrumbs({ items, className, showHome = true }: BreadcrumbsProps) {
+export function CompactBreadcrumbs({ items, className }: BreadcrumbsProps) {
   // Temporarily hiding Home from breadcrumbs
   // const allItems: BreadcrumbItem[] = showHome
   //   ? [{ label: 'Home', href: '/', icon: <Home className="h-4 w-4" /> }, ...items]
@@ -142,7 +140,7 @@ export function CompactBreadcrumbs({ items, className, showHome = true }: Breadc
             </li>
           </>
         ) : (
-          <Breadcrumbs items={items} showHome={showHome} className={className} />
+          <Breadcrumbs items={items} className={className} />
         )}
       </ol>
     </nav>

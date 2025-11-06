@@ -20,7 +20,7 @@ type SessionsSectionProps = {
 };
 
 export function SessionsSection({ projectName }: SessionsSectionProps) {
-  const { data: sessions = [], isLoading, error, refetch } = useSessions(projectName);
+  const { data: sessions = [], isLoading, refetch } = useSessions(projectName);
   const stopSessionMutation = useStopSession();
   const deleteSessionMutation = useDeleteSession();
   const continueSessionMutation = useContinueSession();

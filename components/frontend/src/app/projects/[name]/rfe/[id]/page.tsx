@@ -18,7 +18,6 @@ import { RfeSessionsTable } from "./rfe-sessions-table";
 import { RfePhaseCards } from "./rfe-phase-cards";
 import { RfeWorkspaceCard } from "./rfe-workspace-card";
 import { RfeHeader } from "./rfe-header";
-import { RfeAgentsCard } from "./rfe-agents-card";
 import { AVAILABLE_AGENTS } from "@/lib/agents";
 import { useRfeWorkflow, useRfeWorkflowSessions, useDeleteRfeWorkflow, useRfeWorkflowSeeding, useSeedRfeWorkflow, useUpdateRfeWorkflow, useRepoBlob, useRepoTree, useOpenJiraIssue, useRfeWorkflowAgents } from "@/services/queries";
 

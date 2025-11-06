@@ -2,8 +2,7 @@
 
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, FolderOpen, FileText, HardDrive } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { RefreshCw, FolderOpen, HardDrive } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { FileTree, type FileTreeNode } from "@/components/file-tree";
 import type { AgenticSession } from "@/types/agentic-session";
@@ -15,12 +14,9 @@ export type WorkspaceTabProps = {
   wsUnavailable: boolean;
   wsTree: FileTreeNode[];
   wsSelectedPath?: string;
-  wsFileContent: string;
   onRefresh: (background?: boolean) => void;
   onSelect: (node: FileTreeNode) => void;
   onToggle: (node: FileTreeNode) => void;
-  onSave: (path: string, content: string) => Promise<void>;
-  setWsFileContent: (v: string) => void;
   k8sResources?: {
     pvcName?: string;
     pvcExists?: boolean;
@@ -30,7 +26,7 @@ export type WorkspaceTabProps = {
   onRetrySpawn?: () => void;
 };
 
-const WorkspaceTab: React.FC<WorkspaceTabProps> = ({ session, wsLoading, wsUnavailable, wsTree, wsSelectedPath, wsFileContent, onRefresh, onSelect, onToggle, onSave, setWsFileContent, k8sResources, contentPodError, onRetrySpawn }) => {
+const WorkspaceTab: React.FC<WorkspaceTabProps> = ({ session, wsLoading, wsUnavailable, wsTree, wsSelectedPath, onRefresh, onSelect, onToggle, k8sResources, contentPodError, onRetrySpawn }) => {
   if (wsLoading) {
     return (
       <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">

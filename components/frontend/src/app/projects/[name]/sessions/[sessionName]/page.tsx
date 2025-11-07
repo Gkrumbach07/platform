@@ -173,7 +173,7 @@ export default function ProjectSessionDetailPage({
     // Map OOTB workflows to their Git URLs
     const workflowUrls: Record<string, { gitUrl: string; branch: string; path?: string }> = {
       "spec-kit": {
-        gitUrl: "https://github.com/ambient-code/spec-kit-template.git",
+        gitUrl: "https://github.com/ambient-code/ootb-workflow-templates.git",
         branch: "main",
       },
       // "bug-fix": { gitUrl: "...", branch: "main" }, // TBD

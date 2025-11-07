@@ -92,17 +92,12 @@ export function CreateSessionDialog({
         model: values.model,
         temperature: values.temperature,
         maxTokens: values.maxTokens,
-        timeout: values.timeout,
       },
+      timeout: values.timeout,
     };
 
-    // Add API key if provided
-    if (values.anthropicApiKey && values.anthropicApiKey.trim()) {
-      request.anthropicApiKey = values.anthropicApiKey;
-      if (values.saveApiKeyForFuture) {
-        request.saveApiKeyForFuture = true;
-      }
-    }
+    // Note: anthropicApiKey and saveApiKeyForFuture are form fields but not currently used by the backend
+    // TODO: Add support for these fields if needed in the future
 
     createSessionMutation.mutate(
       { projectName, data: request },

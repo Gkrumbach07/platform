@@ -53,6 +53,7 @@ func registerRoutes(r *gin.Engine, jiraHandler *jira.Handler) {
 			projectGroup.POST("/agentic-sessions/:sessionName/spawn-content-pod", handlers.SpawnContentPod)
 			projectGroup.GET("/agentic-sessions/:sessionName/content-pod-status", handlers.GetContentPodStatus)
 			projectGroup.DELETE("/agentic-sessions/:sessionName/content-pod", handlers.DeleteContentPod)
+			projectGroup.POST("/agentic-sessions/:sessionName/workflow", handlers.SelectWorkflow)
 
 			projectGroup.GET("/rfe-workflows", handlers.ListProjectRFEWorkflows)
 			projectGroup.POST("/rfe-workflows", handlers.CreateProjectRFEWorkflow)

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { formatDistanceToNow, format } from "date-fns";
-import { Square, Trash2, Copy, Play, MoreVertical, Bot, Loader2, FolderTree, AlertCircle, Sprout, CheckCircle2, GitBranch, Edit, RefreshCw, Folder, FileText } from "lucide-react";
+import { Square, Trash2, Copy, Play, MoreVertical, Bot, Loader2, FolderTree, AlertCircle, Sprout, CheckCircle2, GitBranch, Edit, RefreshCw, Folder, FileText, Info } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 // Custom components
@@ -80,6 +80,11 @@ export default function ProjectSessionDetailPage({
   const [contextModalOpen, setContextModalOpen] = useState(false);
   const [contextUrl, setContextUrl] = useState("");
   const [contextBranch, setContextBranch] = useState("main");
+  const [customWorkflowDialogOpen, setCustomWorkflowDialogOpen] = useState(false);
+  const [customWorkflowUrl, setCustomWorkflowUrl] = useState("");
+  const [customWorkflowBranch, setCustomWorkflowBranch] = useState("main");
+  const [customWorkflowPath, setCustomWorkflowPath] = useState("");
+  const [workflowLoading, setWorkflowLoading] = useState(false);
 
   // Extract params
   useEffect(() => {
@@ -89,7 +94,6 @@ export default function ProjectSessionDetailPage({
       try {
         const url = new URL(window.location.href);
         setBackHref(url.searchParams.get("backHref"));
-        setBackLabel(url.searchParams.get("backLabel"));
       } catch {}
     });
   }, [params]);
@@ -150,6 +154,139 @@ export default function ProjectSessionDetailPage({
     });
     await refetchArtifacts();
   }, [queryClient, projectName, rfeWorkflowId, refetchArtifacts]);
+
+  // Handler for workflow selection
+  const handleWorkflowChange = async (value: string) => {
+    setSelectedWorkflow(value);
+    
+    if (value === "custom") {
+      // Open custom workflow dialog
+      setCustomWorkflowDialogOpen(true);
+      return;
+    }
+    
+    if (value === "none") {
+      // No workflow selected, nothing to do
+      return;
+    }
+    
+    // Map OOTB workflows to their Git URLs
+    const workflowUrls: Record<string, { gitUrl: string; branch: string; path?: string }> = {
+      "spec-kit": {
+        gitUrl: "https://github.com/ambient-code/spec-kit-template.git",
+        branch: "main",
+      },
+      // "bug-fix": { gitUrl: "...", branch: "main" }, // TBD
+    };
+    
+    const workflowConfig = workflowUrls[value];
+    if (!workflowConfig) {
+      errorToast(`Workflow ${value} not configured`);
+      return;
+    }
+    
+    // Call API to set workflow
+    setWorkflowLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${projectName}/agentic-sessions/${sessionName}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gitUrl: workflowConfig.gitUrl,
+          branch: workflowConfig.branch,
+          path: workflowConfig.path || "",
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to update workflow");
+      }
+      
+      successToast(`Workflow "${value}" activated`);
+      
+      // Send WebSocket message to notify runner immediately
+      try {
+        await fetch(`/api/projects/${projectName}/agentic-sessions/${sessionName}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "workflow_change",
+            gitUrl: workflowConfig.gitUrl,
+            branch: workflowConfig.branch,
+            path: workflowConfig.path || "",
+          }),
+        });
+      } catch (err) {
+        console.warn("Failed to notify runner via WebSocket:", err);
+      }
+      
+      // Refresh session to see updated workflow
+      await refetchSession();
+    } catch (error) {
+      console.error("Failed to update workflow:", error);
+      errorToast(error instanceof Error ? error.message : "Failed to update workflow");
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  // Handler for custom workflow submission
+  const handleCustomWorkflowSubmit = async () => {
+    if (!customWorkflowUrl.trim()) {
+      errorToast("Git URL is required");
+      return;
+    }
+    
+    setWorkflowLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${projectName}/agentic-sessions/${sessionName}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gitUrl: customWorkflowUrl.trim(),
+          branch: customWorkflowBranch.trim() || "main",
+          path: customWorkflowPath.trim() || "",
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to update workflow");
+      }
+      
+      successToast("Custom workflow activated");
+      
+      // Send WebSocket message to notify runner immediately
+      try {
+        await fetch(`/api/projects/${projectName}/agentic-sessions/${sessionName}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "workflow_change",
+            gitUrl: customWorkflowUrl.trim(),
+            branch: customWorkflowBranch.trim() || "main",
+            path: customWorkflowPath.trim() || "",
+          }),
+        });
+      } catch (err) {
+        console.warn("Failed to notify runner via WebSocket:", err);
+      }
+      
+      setCustomWorkflowDialogOpen(false);
+      // Reset form
+      setCustomWorkflowUrl("");
+      setCustomWorkflowBranch("main");
+      setCustomWorkflowPath("");
+      // Refresh session
+      await refetchSession();
+    } catch (error) {
+      console.error("Failed to update workflow:", error);
+      errorToast(error instanceof Error ? error.message : "Failed to update workflow");
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
 
   // Helper to derive repo folder from URL
   const deriveRepoFolderFromUrl = useCallback((url: string): string => {
@@ -699,24 +836,8 @@ export default function ProjectSessionDetailPage({
             className="mb-4"
           />
           <PageHeader
-            title={
-              <div className="flex items-center gap-2">
-                <span>{session.spec.displayName || session.metadata.name}</span>
-                <Badge className={getPhaseColor(session.status?.phase || "Pending")}>
-                  {session.status?.phase || "Pending"}
-                </Badge>
-              </div>
-            }
-            description={
-              <div>
-                {session.spec.displayName && (
-                  <div className="text-sm text-gray-500">{session.metadata.name}</div>
-                )}
-                <div className="text-xs text-gray-500">
-                  Created {formatDistanceToNow(new Date(session.metadata.creationTimestamp), { addSuffix: true })}
-                </div>
-              </div>
-            }
+            title={session.spec.displayName || session.metadata.name}
+            description={`Created ${formatDistanceToNow(new Date(session.metadata.creationTimestamp), { addSuffix: true })}`}
             actions={
               <>
                 {/* Continue button for completed sessions */}
@@ -792,15 +913,15 @@ export default function ProjectSessionDetailPage({
                   <div className="space-y-3">
                     <div>
                       <label className="text-sm font-medium mb-1.5 block">Select a Workflow</label>
-                      <Select value={selectedWorkflow} onValueChange={setSelectedWorkflow}>
+                      <Select value={selectedWorkflow} onValueChange={handleWorkflowChange}>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="None selected" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None selected</SelectItem>
-                          <SelectItem value="plan-feature">Plan a feature</SelectItem>
-                          <SelectItem value="develop-feature">Develop a feature</SelectItem>
-                          <SelectItem value="bug-fix">Bug fix</SelectItem>
+                          <SelectItem value="spec-kit">Spec Kit Workflow (OOTB)</SelectItem>
+                          <SelectItem value="bug-fix" disabled>Bug Fix Workflow (TBD)</SelectItem>
+                          <SelectItem value="custom">Custom Workflow...</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -846,7 +967,7 @@ export default function ProjectSessionDetailPage({
                         </Alert>
                       )}
 
-                      {(rfeWorkflow?.umbrellaRepo || (rfeWorkflow?.supportingRepos || []).length > 0) && (
+                      {(rfeWorkflow?.umbrellaRepo || (rfeWorkflow?.supportingRepos || []).length > 0) && rfeWorkflow && (
                         <div className="space-y-1">
                           {rfeWorkflow.umbrellaRepo && (
                             <div className="text-sm space-y-1">
@@ -1462,6 +1583,79 @@ export default function ProjectSessionDetailPage({
               </>
             ) : (
               'Add'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Custom Workflow Dialog */}
+    <Dialog open={customWorkflowDialogOpen} onOpenChange={setCustomWorkflowDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Load Custom Workflow</DialogTitle>
+          <DialogDescription>
+            Enter the Git repository URL and optional path for your custom workflow.
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="workflow-url">Git Repository URL *</Label>
+            <Input
+              id="workflow-url"
+              placeholder="https://github.com/org/workflow-repo.git"
+              value={customWorkflowUrl}
+              onChange={(e) => setCustomWorkflowUrl(e.target.value)}
+              disabled={workflowLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="workflow-branch">Branch</Label>
+            <Input
+              id="workflow-branch"
+              placeholder="main"
+              value={customWorkflowBranch}
+              onChange={(e) => setCustomWorkflowBranch(e.target.value)}
+              disabled={workflowLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="workflow-path">Path (optional)</Label>
+            <Input
+              id="workflow-path"
+              placeholder="workflows/my-workflow"
+              value={customWorkflowPath}
+              onChange={(e) => setCustomWorkflowPath(e.target.value)}
+              disabled={workflowLoading}
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional subdirectory within the repository containing the workflow
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setCustomWorkflowDialogOpen(false)}
+            disabled={workflowLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleCustomWorkflowSubmit}
+            disabled={!customWorkflowUrl.trim() || workflowLoading}
+          >
+            {workflowLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              'Load Workflow'
             )}
           </Button>
         </DialogFooter>

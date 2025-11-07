@@ -201,12 +201,46 @@ class ClaudeCodeAdapter:
             parent_session_id = self.context.get_env('PARENT_SESSION_ID', '').strip()
             is_continuation = bool(parent_session_id)
 
-            # Determine cwd and additional dirs from multi-repo config
+            # Determine cwd and additional dirs from multi-repo config or workflow
             repos_cfg = self._get_repos_config()
             cwd_path = self.context.workspace_path
             add_dirs = []
-            if repos_cfg:
-                # Prefer explicit MAIN_REPO_NAME, else use MAIN_REPO_INDEX, else default to 0
+            
+            # Check for active workflow first
+            active_workflow_url = (os.getenv('ACTIVE_WORKFLOW_GIT_URL') or '').strip()
+            if active_workflow_url:
+                # Derive workflow name from URL
+                try:
+                    owner, repo, _ = self._parse_owner_repo(active_workflow_url)
+                    derived_name = repo or ''
+                    if not derived_name:
+                        from urllib.parse import urlparse as _urlparse
+                        p = _urlparse(active_workflow_url)
+                        parts = [p for p in (p.path or '').split('/') if p]
+                        if parts:
+                            derived_name = parts[-1]
+                    derived_name = (derived_name or '').removesuffix('.git').strip()
+                    
+                    if derived_name:
+                        workflow_path = str(Path(self.context.workspace_path) / "workflows" / derived_name)
+                        # Check if path is specified within the workflow
+                        workflow_subpath = (os.getenv('ACTIVE_WORKFLOW_PATH') or '').strip()
+                        if workflow_subpath:
+                            workflow_path = str(Path(workflow_path) / workflow_subpath)
+                        
+                        if Path(workflow_path).exists():
+                            cwd_path = workflow_path
+                            logging.info(f"Using workflow as CWD: {derived_name}")
+                        else:
+                            logging.warning(f"Workflow directory not found: {workflow_path}, using default")
+                            cwd_path = str(Path(self.context.workspace_path) / "workflows" / "default")
+                    else:
+                        cwd_path = str(Path(self.context.workspace_path) / "workflows" / "default")
+                except Exception as e:
+                    logging.warning(f"Failed to derive workflow name: {e}, using default")
+                    cwd_path = str(Path(self.context.workspace_path) / "workflows" / "default")
+            elif repos_cfg:
+                # Multi-repo mode: Prefer explicit MAIN_REPO_NAME, else use MAIN_REPO_INDEX, else default to 0
                 main_name = (os.getenv('MAIN_REPO_NAME') or '').strip()
                 if not main_name:
                     idx_raw = (os.getenv('MAIN_REPO_INDEX') or '').strip()
@@ -228,6 +262,14 @@ class ClaudeCodeAdapter:
                     p = str(Path(self.context.workspace_path) / name)
                     if p != cwd_path:
                         add_dirs.append(p)
+            else:
+                # No workflow and no repos: use workflows/default
+                cwd_path = str(Path(self.context.workspace_path) / "workflows" / "default")
+
+            # Always add artifacts directory for workflow outputs
+            artifacts_path = str(Path(self.context.workspace_path) / "artifacts")
+            if artifacts_path not in add_dirs and artifacts_path != cwd_path:
+                add_dirs.append(artifacts_path)
 
             # Log working directory and additional directories for debugging
             logging.info(f"Claude SDK CWD: {cwd_path}")
@@ -444,6 +486,15 @@ class ClaudeCodeAdapter:
                         elif mtype in ('end_session', 'terminate', 'stop'):
                             await self._send_log({"level": "system", "message": "interactive.ended"})
                             break
+                        elif mtype == 'workflow_change':
+                            # Handle workflow selection during interactive session
+                            git_url = str(payload.get('gitUrl') or '').strip()
+                            branch = str(payload.get('branch') or 'main').strip()
+                            path = str(payload.get('path') or '').strip()
+                            if git_url:
+                                await self._handle_workflow_selection(git_url, branch, path)
+                            else:
+                                await self._send_log("⚠️ Workflow change request missing gitUrl")
                         elif mtype == 'interrupt':
                             try:
                                 await client.interrupt()  # type: ignore[attr-defined]
@@ -656,6 +707,16 @@ class ClaudeCodeAdapter:
             logging.error(f"Failed to prepare workspace: {e}")
             await self._send_log(f"Workspace preparation failed: {e}")
 
+        # Create workflow and artifacts directories
+        try:
+            workflows_dir = workspace / "workflows" / "default"
+            artifacts_dir = workspace / "artifacts"
+            workflows_dir.mkdir(parents=True, exist_ok=True)
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            logging.info("Created workflows/default and artifacts directories")
+        except Exception as e:
+            logging.warning(f"Failed to create workflow directories: {e}")
+
     async def _validate_prerequisites(self):
         """Validate prerequisite files exist for phase-based slash commands."""
         prompt = self.context.get_env("PROMPT", "")
@@ -707,6 +768,64 @@ class ClaudeCodeAdapter:
 
                 break  # Only check the first matching command
 
+    async def _handle_workflow_selection(self, git_url: str, branch: str = "main", path: str = ""):
+        """Clone and setup a workflow repository."""
+        try:
+            workspace = Path(self.context.workspace_path)
+            token = os.getenv("GITHUB_TOKEN") or await self._fetch_github_token()
+            
+            # Derive repo name from URL
+            try:
+                owner, repo, _ = self._parse_owner_repo(git_url)
+                derived_name = repo or ''
+                if not derived_name:
+                    # Fallback: last path segment without .git
+                    from urllib.parse import urlparse as _urlparse
+                    p = _urlparse(git_url)
+                    parts = [p for p in (p.path or '').split('/') if p]
+                    if parts:
+                        derived_name = parts[-1]
+                derived_name = (derived_name or '').removesuffix('.git').strip()
+            except Exception:
+                derived_name = 'workflow'
+            
+            if not derived_name:
+                await self._send_log("❌ Could not derive workflow name from URL")
+                return
+            
+            workflow_dir = workspace / "workflows" / derived_name
+            
+            # Check if workflow already exists
+            if workflow_dir.exists() and (workflow_dir / ".git").exists():
+                await self._send_log(f"✓ Workflow {derived_name} already exists, updating...")
+                # Pull latest changes
+                clone_url = self._url_with_token(git_url, token) if token else git_url
+                await self._run_cmd(["git", "remote", "set-url", "origin", clone_url], cwd=str(workflow_dir), ignore_errors=True)
+                await self._run_cmd(["git", "fetch", "origin", branch], cwd=str(workflow_dir))
+                await self._run_cmd(["git", "checkout", branch], cwd=str(workflow_dir))
+                await self._run_cmd(["git", "pull", "origin", branch], cwd=str(workflow_dir))
+            else:
+                # Clone fresh copy
+                await self._send_log(f"📥 Cloning workflow {derived_name}...")
+                logging.info(f"Cloning workflow from {git_url} (branch: {branch})")
+                clone_url = self._url_with_token(git_url, token) if token else git_url
+                await self._run_cmd(["git", "clone", "--branch", branch, "--single-branch", clone_url, str(workflow_dir)], cwd=str(workspace))
+                logging.info(f"Successfully cloned workflow {derived_name}")
+            
+            # If path is specified, we only want that subdirectory
+            if path and path.strip():
+                subdir = workflow_dir / path.strip()
+                if subdir.exists() and subdir.is_dir():
+                    await self._send_log(f"✓ Workflow path: {path}")
+                else:
+                    await self._send_log(f"⚠️ Warning: Workflow path '{path}' not found in repository")
+            
+            await self._send_log(f"✅ Workflow {derived_name} ready")
+            logging.info(f"Workflow {derived_name} setup complete at {workflow_dir}")
+            
+        except Exception as e:
+            logging.error(f"Failed to setup workflow: {e}")
+            await self._send_log(f"❌ Workflow setup failed: {e}")
 
     async def _push_results_if_any(self):
         """Commit and push changes to output repo/branch if configured."""
@@ -1368,7 +1487,7 @@ class ClaudeCodeAdapter:
         msg_type = message.get('type', '')
 
         # Queue interactive messages for processing loop
-        if msg_type in ('user_message', 'interrupt', 'end_session', 'terminate', 'stop'):
+        if msg_type in ('user_message', 'interrupt', 'end_session', 'terminate', 'stop', 'workflow_change'):
             await self._incoming_queue.put(message)
             logging.debug(f"Queued incoming message: {msg_type}")
             return

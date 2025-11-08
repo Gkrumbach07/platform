@@ -64,10 +64,7 @@ func AddProjectRFEWorkflowSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch session", "details": err.Error()})
 		return
 	}
-	meta, ok := GetMetadataMap(obj)
-	if !ok {
-		meta = make(map[string]interface{})
-	}
+	meta, _ := obj.Object["metadata"].(map[string]interface{})
 	labels, _ := meta["labels"].(map[string]interface{})
 	if labels == nil {
 		labels = map[string]interface{}{}
@@ -109,10 +106,7 @@ func RemoveProjectRFEWorkflowSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch session", "details": err.Error()})
 		return
 	}
-	meta, ok := GetMetadataMap(obj)
-	if !ok {
-		meta = make(map[string]interface{})
-	}
+	meta, _ := obj.Object["metadata"].(map[string]interface{})
 	labels, _ := meta["labels"].(map[string]interface{})
 	if labels != nil {
 		delete(labels, "rfe-workflow")

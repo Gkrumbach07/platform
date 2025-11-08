@@ -61,7 +61,7 @@ func StartSession(c *gin.Context) {
 	// Terminal phases from CRD: Completed, Failed, Stopped, Error
 	isActualContinuation := false
 	currentPhase := ""
-	if currentStatus, ok := GetStatusMap(item); ok {
+	if currentStatus, ok := item.Object["status"].(map[string]interface{}); ok {
 		if phase, ok := currentStatus["phase"].(string); ok {
 			currentPhase = phase
 			terminalPhases := []string{"Completed", "Failed", "Stopped", "Error"}
@@ -91,7 +91,7 @@ func StartSession(c *gin.Context) {
 		log.Printf("StartSession: Set parent-session-id annotation to %s for continuation (has completion time)", sessionName)
 
 		// For headless sessions being continued, force interactive mode
-		if spec, ok := GetSpecMap(item); ok {
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
 			if interactive, ok := spec["interactive"].(bool); !ok || !interactive {
 				// Session was headless, convert to interactive
 				spec["interactive"] = true
@@ -141,12 +141,7 @@ func StartSession(c *gin.Context) {
 		item.Object["status"] = make(map[string]interface{})
 	}
 
-	status, ok := GetStatusMap(item)
-	if !ok {
-		status = make(map[string]interface{})
-		item.Object["status"] = status
-	}
-
+	status := item.Object["status"].(map[string]interface{})
 	// Set to Pending so operator will process it (operator only acts on Pending phase)
 	status["phase"] = "Pending"
 	status["message"] = "Session restart requested"
@@ -164,24 +159,17 @@ func StartSession(c *gin.Context) {
 	}
 
 	// Parse and return updated session
-	metadata, ok := GetMetadataMap(updated)
-	if !ok {
-		log.Printf("Updated session %s missing metadata", sessionName)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid session data"})
-		return
-	}
-
 	session := types.AgenticSession{
 		APIVersion: updated.GetAPIVersion(),
 		Kind:       updated.GetKind(),
-		Metadata:   metadata,
+		Metadata:   updated.Object["metadata"].(map[string]interface{}),
 	}
 
-	if spec, ok := GetSpecMap(updated); ok {
+	if spec, ok := updated.Object["spec"].(map[string]interface{}); ok {
 		session.Spec = parseSpec(spec)
 	}
 
-	if status, ok := GetStatusMap(updated); ok {
+	if status, ok := updated.Object["status"].(map[string]interface{}); ok {
 		session.Status = parseStatus(status)
 	}
 
@@ -208,7 +196,7 @@ func StopSession(c *gin.Context) {
 	}
 
 	// Check current status
-	status, ok := GetStatusMap(item)
+	status, ok := item.Object["status"].(map[string]interface{})
 	if !ok {
 		status = make(map[string]interface{})
 		item.Object["status"] = status
@@ -280,7 +268,7 @@ func StopSession(c *gin.Context) {
 	status["completionTime"] = time.Now().Format(time.RFC3339)
 
 	// Also set interactive: true in spec so session can be restarted
-	if spec, ok := GetSpecMap(item); ok {
+	if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
 		if interactive, ok := spec["interactive"].(bool); !ok || !interactive {
 			log.Printf("Setting interactive: true for stopped session %s to allow restart", sessionName)
 			spec["interactive"] = true
@@ -308,24 +296,17 @@ func StopSession(c *gin.Context) {
 	}
 
 	// Parse and return updated session
-	metadata, ok := GetMetadataMap(updated)
-	if !ok {
-		log.Printf("Updated session %s missing metadata", sessionName)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid session data"})
-		return
-	}
-
 	session := types.AgenticSession{
 		APIVersion: updated.GetAPIVersion(),
 		Kind:       updated.GetKind(),
-		Metadata:   metadata,
+		Metadata:   updated.Object["metadata"].(map[string]interface{}),
 	}
 
-	if spec, ok := GetSpecMap(updated); ok {
+	if spec, ok := updated.Object["spec"].(map[string]interface{}); ok {
 		session.Spec = parseSpec(spec)
 	}
 
-	if status, ok := GetStatusMap(updated); ok {
+	if status, ok := updated.Object["status"].(map[string]interface{}); ok {
 		session.Status = parseStatus(status)
 	}
 
@@ -364,11 +345,7 @@ func UpdateSessionStatus(c *gin.Context) {
 	if item.Object["status"] == nil {
 		item.Object["status"] = make(map[string]interface{})
 	}
-	status, ok := GetStatusMap(item)
-	if !ok {
-		status = make(map[string]interface{})
-		item.Object["status"] = status
-	}
+	status := item.Object["status"].(map[string]interface{})
 
 	// Accept standard fields and result summary fields from runner
 	allowed := map[string]struct{}{

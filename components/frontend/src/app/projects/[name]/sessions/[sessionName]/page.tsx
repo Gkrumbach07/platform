@@ -53,6 +53,7 @@ import {
 } from "@/services/queries";
 import { useSecretsValues } from "@/services/queries/use-secrets";
 import { successToast, errorToast } from "@/hooks/use-toast";
+import { useOOTBWorkflows } from "@/services/queries/use-workflows";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function ProjectSessionDetailPage({
@@ -142,6 +143,9 @@ export default function ProjectSessionDetailPage({
     projectName,
     rfeWorkflowId || ''
   );
+  
+  // Fetch OOTB workflows
+  const { data: ootbWorkflows = [] } = useOOTBWorkflows();
 
   // Workspace state - removed unused tree/file management code
 
@@ -170,20 +174,23 @@ export default function ProjectSessionDetailPage({
       return;
     }
     
-    // Map OOTB workflows to their Git URLs
-    const workflowUrls: Record<string, { gitUrl: string; branch: string; path?: string }> = {
-      "spec-kit": {
-        gitUrl: "https://github.com/ambient-code/ootb-workflow-templates.git",
-        branch: "main",
-      },
-      // "bug-fix": { gitUrl: "...", branch: "main" }, // TBD
-    };
-    
-    const workflowConfig = workflowUrls[value];
-    if (!workflowConfig) {
-      errorToast(`Workflow ${value} not configured`);
+    // Find the selected workflow from OOTB workflows
+    const workflow = ootbWorkflows.find(w => w.id === value);
+    if (!workflow) {
+      errorToast(`Workflow ${value} not found`);
       return;
     }
+    
+    if (!workflow.enabled) {
+      errorToast(`Workflow ${workflow.name} is not yet available`);
+      return;
+    }
+    
+    const workflowConfig = {
+      gitUrl: workflow.gitUrl,
+      branch: workflow.branch,
+      path: workflow.path || "",
+    };
     
     // Call API to set workflow
     setWorkflowLoading(true);
@@ -919,8 +926,15 @@ export default function ProjectSessionDetailPage({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None selected</SelectItem>
-                          <SelectItem value="spec-kit">Spec Kit Workflow (OOTB)</SelectItem>
-                          <SelectItem value="bug-fix" disabled>Bug Fix Workflow (TBD)</SelectItem>
+                          {ootbWorkflows.map((workflow) => (
+                            <SelectItem 
+                              key={workflow.id} 
+                              value={workflow.id}
+                              disabled={!workflow.enabled}
+                            >
+                              {workflow.name}
+                            </SelectItem>
+                          ))}
                           <SelectItem value="custom">Custom Workflow...</SelectItem>
                         </SelectContent>
                       </Select>

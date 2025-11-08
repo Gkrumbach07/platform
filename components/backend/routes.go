@@ -21,6 +21,9 @@ func registerRoutes(r *gin.Engine, jiraHandler *jira.Handler) {
 	// API routes
 	api := r.Group("/api")
 	{
+		// Public endpoints (no auth required)
+		api.GET("/workflows/ootb", handlers.ListOOTBWorkflows)
+		
 		api.POST("/projects/:projectName/agentic-sessions/:sessionName/github/token", handlers.MintSessionGitHubToken)
 
 		projectGroup := api.Group("/projects/:projectName", handlers.ValidateProjectContext())

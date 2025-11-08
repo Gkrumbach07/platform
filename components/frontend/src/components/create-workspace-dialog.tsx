@@ -87,11 +87,12 @@ export function CreateWorkspaceDialog({
     }
   };
 
-  const handleNameChange = (name: string) => {
-    setManuallyEditedName(true);
-    setFormData((prev) => ({ ...prev, name }));
-    setNameError(validateProjectName(name));
-  };
+  // Commented out along with the name input field - auto-generated from displayName
+  // const handleNameChange = (name: string) => {
+  //   setManuallyEditedName(true);
+  //   setFormData((prev) => ({ ...prev, name }));
+  //   setNameError(validateProjectName(name));
+  // };
 
   const resetForm = () => {
     setFormData({

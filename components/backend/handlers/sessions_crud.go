@@ -851,6 +851,86 @@ func UpdateSessionDisplayName(c *gin.Context) {
 	c.JSON(http.StatusOK, session)
 }
 
+// POST /api/projects/:projectName/agentic-sessions/:sessionName/workflow
+// SelectWorkflow sets the active workflow for a session
+func SelectWorkflow(c *gin.Context) {
+	project := c.GetString("project")
+	sessionName := c.Param("sessionName")
+	_, reqDyn := GetK8sClientsForRequest(c)
+
+	var req types.WorkflowSelection
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	gvr := GetAgenticSessionV1Alpha1Resource()
+
+	// Retrieve current resource
+	item, err := reqDyn.Resource(gvr).Namespace(project).Get(context.TODO(), sessionName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		log.Printf("Failed to get agentic session %s in project %s: %v", sessionName, project, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get agentic session"})
+		return
+	}
+
+	// Update activeWorkflow in spec
+	spec, ok := item.Object["spec"].(map[string]interface{})
+	if !ok {
+		spec = make(map[string]interface{})
+		item.Object["spec"] = spec
+	}
+
+	// Set activeWorkflow
+	workflowMap := map[string]interface{}{
+		"gitUrl": req.GitUrl,
+	}
+	if req.Branch != "" {
+		workflowMap["branch"] = req.Branch
+	} else {
+		workflowMap["branch"] = "main"
+	}
+	if req.Path != "" {
+		workflowMap["path"] = req.Path
+	}
+	spec["activeWorkflow"] = workflowMap
+
+	// Persist the change
+	updated, err := reqDyn.Resource(gvr).Namespace(project).Update(context.TODO(), item, v1.UpdateOptions{})
+	if err != nil {
+		log.Printf("Failed to update workflow for agentic session %s in project %s: %v", sessionName, project, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update workflow"})
+		return
+	}
+
+	log.Printf("Workflow updated for session %s: %s@%s", sessionName, req.GitUrl, workflowMap["branch"])
+
+	// Note: The workflow will be available on next user interaction. The frontend should
+	// send a workflow_change message via the WebSocket to notify the runner immediately.
+
+	// Respond with updated session summary
+	session := types.AgenticSession{
+		APIVersion: updated.GetAPIVersion(),
+		Kind:       updated.GetKind(),
+		Metadata:   updated.Object["metadata"].(map[string]interface{}),
+	}
+	if s, ok := updated.Object["spec"].(map[string]interface{}); ok {
+		session.Spec = parseSpec(s)
+	}
+	if st, ok := updated.Object["status"].(map[string]interface{}); ok {
+		session.Status = parseStatus(st)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Workflow updated successfully",
+		"session": session,
+	})
+}
+
 // DeleteSession deletes an agentic session.
 func DeleteSession(c *gin.Context) {
 	project := c.GetString("project")

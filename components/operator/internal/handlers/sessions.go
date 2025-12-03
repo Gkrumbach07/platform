@@ -197,6 +197,12 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 		})
 		// Clear terminal state conditions from previous run
 		statusPatch.AddCondition(conditionUpdate{
+			Type:    conditionStopped,
+			Status:  "False",
+			Reason:  "Restarting",
+			Message: "Session restarting",
+		})
+		statusPatch.AddCondition(conditionUpdate{
 			Type:    conditionStopping,
 			Status:  "False",
 			Reason:  "Restarting",
@@ -278,6 +284,14 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 
 			statusPatch.SetField("phase", "Stopped")
 			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
+			// Set conditionStopped=True so derivePhaseFromConditions returns "Stopped"
+			// This prevents PVCReady=True from causing phase to become "Pending"
+			statusPatch.AddCondition(conditionUpdate{
+				Type:    conditionStopped,
+				Status:  "True",
+				Reason:  "UserStopped",
+				Message: "Session stopped by user request",
+			})
 			statusPatch.AddCondition(conditionUpdate{
 				Type:    conditionStopping,
 				Status:  "False",
@@ -543,6 +557,13 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					Status:  "False",
 					Reason:  "UserStopped",
 					Message: "User requested stop during job creation",
+				})
+				// Set conditionStopped=True so derivePhaseFromConditions returns "Stopped"
+				statusPatch.AddCondition(conditionUpdate{
+					Type:    conditionStopped,
+					Status:  "True",
+					Reason:  "UserStopped",
+					Message: "Session stopped by user request",
 				})
 				statusPatch.AddCondition(conditionUpdate{
 					Type:    conditionJobCreated,

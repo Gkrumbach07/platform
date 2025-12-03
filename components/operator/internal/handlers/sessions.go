@@ -293,6 +293,13 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 
 	// === CONTINUE WITH PHASE-BASED RECONCILIATION ===
 
+	// Early exit: If desired-phase is "Stopped", do not recreate jobs or reconcile
+	// This prevents race conditions where the operator sees the job deleted before phase is updated
+	if desiredPhase == "Stopped" {
+		log.Printf("Session %s has desired-phase=Stopped, skipping further reconciliation", name)
+		return nil
+	}
+
 	// Handle Stopped phase - clean up running job if it exists
 	if phase == "Stopped" {
 		log.Printf("Session %s is stopped, checking for running job to clean up", name)
@@ -463,6 +470,23 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			}
 			return nil
 		} else if errors.IsNotFound(err) {
+			// Job doesn't exist but phase is Creating - check if this is due to a stop request
+			if desiredPhase == "Stopped" {
+				log.Printf("Session %s in Creating phase but job not found and stop requested, transitioning to Stopped", name)
+				_ = mutateAgenticSessionStatus(sessionNamespace, name, func(status map[string]interface{}) {
+					status["phase"] = "Stopped"
+					status["completionTime"] = time.Now().UTC().Format(time.RFC3339)
+					setCondition(status, conditionUpdate{
+						Type:    conditionReady,
+						Status:  "False",
+						Reason:  "UserStopped",
+						Message: "User requested stop during job creation",
+					})
+				})
+				_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/desired-phase")
+				return nil
+			}
+
 			// Job doesn't exist but phase is Creating - this is inconsistent state
 			// Could happen if job was manually deleted or operator crashed between job creation and status update
 			// Reset to Pending and let it fall through to job creation logic below

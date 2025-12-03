@@ -39,6 +39,7 @@ class ClaudeCodeAdapter:
         self._incoming_queue: "asyncio.Queue[dict]" = asyncio.Queue()
         self._restart_requested = False
         self._first_run = True  # Track if this is the first SDK run or a mid-session restart
+        self._skip_resume_on_restart = False  # When true, don't try to resume SDK session
 
     async def initialize(self, context: RunnerContext):
         """Initialize the adapter with context."""
@@ -135,6 +136,7 @@ class ClaudeCodeAdapter:
                 # Check if restart was requested (workflow changed)
                 if self._restart_requested:
                     self._restart_requested = False
+                    self._skip_resume_on_restart = True  # Don't try to resume - session is invalidated
                     await self._send_log("🔄 Restarting Claude with new workflow...")
                     logging.info("Restarting Claude SDK due to workflow change")
                     # Loop will call _run_claude_agent_sdk again with updated env vars
@@ -390,24 +392,21 @@ class ClaudeCodeAdapter:
                 system_prompt=system_prompt_config
                 )
 
-            # Use SDK's built-in session resumption if continuing
-            # The CLI stores session state in /app/.claude which is now persisted in PVC
-            # We need to get the SDK's UUID session ID, not our K8s session name
-            if is_continuation and parent_session_id:
+            # Use SDK's built-in continue_conversation feature
+            # The CLI stores session state in /app/.claude which is persisted in PVC
+            # This automatically resumes the conversation without needing to track session IDs
+            # Always enable on restarts so conversation context is preserved
+            if not self._first_run or is_continuation:
                 try:
-                    # Fetch the SDK session ID from the parent session's CR status
-                    sdk_resume_id = await self._get_sdk_session_id(parent_session_id)
-                    if sdk_resume_id:
-                        options.resume = sdk_resume_id  # type: ignore[attr-defined]
-                        options.fork_session = False  # type: ignore[attr-defined]
-                        logging.info(f"Enabled SDK session resumption: resume={sdk_resume_id[:8]}, fork=False")
-                        await self._send_log(f"🔄 Resuming SDK session {sdk_resume_id[:8]}")
-                    else:
-                        logging.warning(f"Parent session {parent_session_id} has no stored SDK session ID, starting fresh")
-                        await self._send_log("⚠️ No SDK session ID found, starting fresh")
+                    options.continue_conversation = True  # type: ignore[attr-defined]
+                    logging.info("Enabled continue_conversation for session resumption")
+                    await self._send_log("🔄 Continuing conversation from previous state")
                 except Exception as e:
-                    logging.warning(f"Failed to set resume options: {e}")
-                    await self._send_log(f"⚠️ SDK resume failed: {e}")
+                    logging.warning(f"Failed to set continue_conversation: {e}")
+            
+            # Reset skip flag if it was set
+            if self._skip_resume_on_restart:
+                self._skip_resume_on_restart = False
 
             # Best-effort set add_dirs if supported by SDK version
             try:
@@ -598,11 +597,33 @@ class ClaudeCodeAdapter:
                                 {"type": "result.message", "payload": result_payload},
                             )
 
-            # Use async with - SDK will automatically resume if options.resume is set
-            async with ClaudeSDKClient(options=options) as client:
-                if is_continuation and parent_session_id:
-                    await self._send_log("✅ SDK resuming session with full context")
-                    logging.info(f"SDK is handling session resumption for {parent_session_id}")
+            # Use async with - SDK will use continue_conversation to resume from local state
+            # Wrap in retry logic to handle conversation not found errors
+            async def create_sdk_client(opts, disable_continue=False):
+                """Create SDK client, optionally disabling continue_conversation on retry."""
+                if disable_continue and hasattr(opts, 'continue_conversation'):
+                    opts.continue_conversation = False  # type: ignore[attr-defined]
+                return ClaudeSDKClient(options=opts)
+
+            # First attempt - may fail if conversation state is corrupted
+            try:
+                client_ctx = create_sdk_client(options)
+                client = await client_ctx.__aenter__()
+            except Exception as resume_error:
+                error_str = str(resume_error).lower()
+                if "no conversation found" in error_str or "session" in error_str:
+                    logging.warning(f"Conversation continuation failed: {resume_error}")
+                    await self._send_log("⚠️ Could not continue conversation, starting fresh...")
+                    # Retry without continue_conversation
+                    client_ctx = create_sdk_client(options, disable_continue=True)
+                    client = await client_ctx.__aenter__()
+                else:
+                    raise
+
+            try:
+                if not self._first_run:
+                    await self._send_log("✅ Continuing conversation")
+                    logging.info("SDK continuing conversation from local state")
 
                 async def process_one_prompt(text: str):
                     await self.shell._send_message(MessageType.AGENT_RUNNING, {})
@@ -675,6 +696,9 @@ class ClaudeCodeAdapter:
                                 await self._send_log({"level": "warn", "message": f"interrupt.failed: {e}"})
                         else:
                             await self._send_log({"level": "debug", "message": f"ignored.message: {mtype_raw}"})
+            finally:
+                # Clean up the SDK client context
+                await client_ctx.__aexit__(None, None, None)
 
             # Note: All output is streamed via WebSocket, not collected here
             await self._check_pr_intent("")

@@ -13,6 +13,7 @@ export type StatusColorKey =
   | 'info'
   | 'pending'
   | 'running'
+  | 'stopping'
   | 'stopped'
   | 'default';
 
@@ -27,6 +28,7 @@ export const STATUS_COLORS: Record<StatusColorKey, string> = {
   info: 'bg-status-info text-status-info-foreground border-status-info-border',
   pending: 'bg-muted text-muted-foreground border-border',
   running: 'bg-blue-600 text-white border-blue-600',
+  stopping: 'bg-amber-500 text-white border-amber-500',
   stopped: 'bg-muted text-muted-foreground border-border',
   default: 'bg-muted text-muted-foreground border-border',
 };
@@ -38,6 +40,7 @@ export const SESSION_PHASE_TO_STATUS: Record<string, StatusColorKey> = {
   pending: 'warning',
   creating: 'info',
   running: 'running',
+  stopping: 'stopping',
   completed: 'success',
   failed: 'error',
   error: 'error',

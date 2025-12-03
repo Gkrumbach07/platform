@@ -28,6 +28,7 @@ const (
 	conditionTempContentPodReady       = "TempContentPodReady"
 	conditionCompleted                 = "Completed"
 	conditionFailed                    = "Failed"
+	conditionStopping                  = "Stopping"
 	runnerTokenSecretAnnotation        = "ambient-code.io/runner-token-secret"
 	runnerServiceAccountAnnotation     = "ambient-code.io/runner-sa"
 	runnerTokenRefreshedAtAnnotation   = "ambient-code.io/token-refreshed-at"
@@ -331,6 +332,8 @@ func derivePhaseFromConditions(status map[string]interface{}) string {
 		return "Failed"
 	case condStatus(conditionCompleted) == "True":
 		return "Completed"
+	case condStatus(conditionStopping) == "True":
+		return "Stopping"
 	case condStatus(conditionRunnerStarted) == "True":
 		return "Running"
 	case condStatus(conditionJobCreated) == "True":

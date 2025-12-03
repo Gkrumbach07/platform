@@ -220,34 +220,83 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 		jobName := fmt.Sprintf("%s-job", name)
 		if err := deleteJobAndPerJobService(sessionNamespace, jobName, name); err != nil {
 			log.Printf("[DesiredPhase] Warning: failed to delete job: %v", err)
-			// Set to Stopped anyway - cleanup will happen via OwnerReferences
 		}
 
-		// Set status to Stopped directly (batch Stopping → Stopped into single update)
-		statusPatch.SetField("phase", "Stopped")
-		statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
+		// Set phase=Stopping (transitional state) - this blocks any recreation attempts
+		// The Stopping phase handler will verify cleanup and transition to Stopped
+		statusPatch.AddCondition(conditionUpdate{
+			Type:    conditionStopping,
+			Status:  "True",
+			Reason:  "UserRequested",
+			Message: "User requested stop, cleaning up resources",
+		})
 		statusPatch.AddCondition(conditionUpdate{
 			Type:    conditionReady,
 			Status:  "False",
-			Reason:  "UserStopped",
-			Message: "User requested stop",
+			Reason:  "Stopping",
+			Message: "Session is stopping",
 		})
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionRunnerStarted,
-			Status:  "False",
-			Reason:  "UserStopped",
-			Message: "Runner stopped by user",
-		})
-		// Apply immediately before returning
+		// Apply immediately - this sets phase=Stopping via derivePhaseFromConditions
 		if err := statusPatch.Apply(); err != nil {
 			log.Printf("[DesiredPhase] Warning: failed to update status: %v", err)
 		}
 
-		// Clear desired-phase annotation (request fulfilled)
-		_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/desired-phase")
-		_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/stop-requested-at")
+		log.Printf("[DesiredPhase] Session %s/%s: transitioned to Stopping", sessionNamespace, name)
+		// Don't clear desired-phase yet - the Stopping handler will do that after verifying cleanup
+		return nil
+	}
 
-		log.Printf("[DesiredPhase] Session %s/%s: transitioned to Stopped", sessionNamespace, name)
+	// === STOPPING PHASE HANDLER ===
+	// Complete the stop transition: verify cleanup and transition to Stopped
+	if phase == "Stopping" {
+		jobName := fmt.Sprintf("%s-job", name)
+		_, err := config.K8sClient.BatchV1().Jobs(sessionNamespace).Get(context.TODO(), jobName, v1.GetOptions{})
+
+		if errors.IsNotFound(err) {
+			// Job is gone - safe to transition to Stopped
+			log.Printf("[Stopping] Session %s/%s: job deleted, transitioning to Stopped", sessionNamespace, name)
+
+			statusPatch.SetField("phase", "Stopped")
+			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
+			statusPatch.AddCondition(conditionUpdate{
+				Type:    conditionStopping,
+				Status:  "False",
+				Reason:  "Stopped",
+				Message: "Session stopped successfully",
+			})
+			statusPatch.AddCondition(conditionUpdate{
+				Type:    conditionJobCreated,
+				Status:  "False",
+				Reason:  "UserStopped",
+				Message: "Job deleted by user stop request",
+			})
+			statusPatch.AddCondition(conditionUpdate{
+				Type:    conditionRunnerStarted,
+				Status:  "False",
+				Reason:  "UserStopped",
+				Message: "Runner stopped by user",
+			})
+
+			if err := statusPatch.Apply(); err != nil {
+				log.Printf("[Stopping] Warning: failed to update status: %v", err)
+			}
+
+			// Now clear the desired-phase annotation
+			_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/desired-phase")
+			_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/stop-requested-at")
+
+			log.Printf("[Stopping] Session %s/%s: transitioned to Stopped", sessionNamespace, name)
+		} else if err != nil {
+			// Error checking job - log and retry next reconciliation
+			log.Printf("[Stopping] Session %s/%s: error checking job status: %v", sessionNamespace, name, err)
+		} else {
+			// Job still exists - try to delete it again
+			log.Printf("[Stopping] Session %s/%s: job still exists, deleting", sessionNamespace, name)
+			if err := deleteJobAndPerJobService(sessionNamespace, jobName, name); err != nil {
+				log.Printf("[Stopping] Warning: failed to delete job: %v", err)
+			}
+			// Will retry on next reconciliation
+		}
 		return nil
 	}
 
@@ -465,6 +514,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 		} else if errors.IsNotFound(err) {
 			// Job doesn't exist but phase is Creating - check if this is due to a stop request
 			if desiredPhase == "Stopped" {
+				// Job already gone, can transition directly to Stopped (skip Stopping phase)
 				log.Printf("Session %s in Creating phase but job not found and stop requested, transitioning to Stopped", name)
 				statusPatch.SetField("phase", "Stopped")
 				statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
@@ -474,8 +524,27 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					Reason:  "UserStopped",
 					Message: "User requested stop during job creation",
 				})
+				statusPatch.AddCondition(conditionUpdate{
+					Type:    conditionJobCreated,
+					Status:  "False",
+					Reason:  "UserStopped",
+					Message: "Job deleted by user stop request",
+				})
+				statusPatch.AddCondition(conditionUpdate{
+					Type:    conditionRunnerStarted,
+					Status:  "False",
+					Reason:  "UserStopped",
+					Message: "Runner stopped by user",
+				})
+				statusPatch.AddCondition(conditionUpdate{
+					Type:    conditionStopping,
+					Status:  "False",
+					Reason:  "Stopped",
+					Message: "Session stopped successfully",
+				})
 				_ = statusPatch.Apply()
 				_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/desired-phase")
+				_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/stop-requested-at")
 				return nil
 			}
 

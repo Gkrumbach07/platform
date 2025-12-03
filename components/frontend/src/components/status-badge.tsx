@@ -23,6 +23,7 @@ export type StatusVariant =
   | 'info'
   | 'pending'
   | 'running'
+  | 'stopping'
   | 'stopped'
   | 'default';
 
@@ -65,6 +66,10 @@ const STATUS_CONFIG: Record<
     icon: Loader2,
     label: 'Running',
   },
+  stopping: {
+    icon: Loader2,
+    label: 'Stopping',
+  },
   stopped: {
     icon: Square,
     label: 'Stopped',
@@ -105,7 +110,7 @@ export function StatusBadge({
           className={cn(
             'h-3 w-3',
             pulse && 'animate-pulse',
-            normalizedStatus === 'running' && 'animate-spin'
+            (normalizedStatus === 'running' || normalizedStatus === 'stopping') && 'animate-spin'
           )}
         />
       )}
@@ -122,6 +127,7 @@ export function SessionPhaseBadge({ phase }: { phase: string }) {
     pending: 'pending',
     creating: 'pending',
     running: 'running',
+    stopping: 'stopping',
     completed: 'success',
     failed: 'error',
     stopped: 'stopped',
@@ -129,8 +135,9 @@ export function SessionPhaseBadge({ phase }: { phase: string }) {
   };
 
   const status = statusMap[phase.toLowerCase()] || 'default';
+  const shouldAnimate = status === 'running' || status === 'stopping';
 
-  return <StatusBadge status={status} label={phase} pulse={status === 'running'} />;
+  return <StatusBadge status={status} label={phase} pulse={shouldAnimate} />;
 }
 
 /**

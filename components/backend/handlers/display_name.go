@@ -131,7 +131,6 @@ func generateAndUpdateDisplayName(projectName, sessionName, userMessage string, 
 
 // getAnthropicClient creates an Anthropic client using either Vertex AI or API key
 // Returns the client and a boolean indicating if Vertex AI is being used
-// Falls back to API key if Vertex credentials are incomplete
 func getAnthropicClient(ctx context.Context, projectName string) (anthropic.Client, bool, error) {
 	// Check if Vertex AI is enabled (cluster-wide setting)
 	if os.Getenv("CLAUDE_CODE_USE_VERTEX") == "1" {
@@ -143,21 +142,18 @@ func getAnthropicClient(ctx context.Context, projectName string) (anthropic.Clie
 		if region == "" {
 			region = "us-central1" // Default region
 		}
-
-		// If Vertex project ID is set, use Vertex AI
-		if gcpProjectID != "" {
-			log.Printf("DisplayNameGen: Using Vertex AI for %s (region: %s, project: %s)", projectName, region, gcpProjectID)
-			client := anthropic.NewClient(
-				vertex.WithGoogleAuth(ctx, region, gcpProjectID),
-			)
-			return client, true, nil
+		if gcpProjectID == "" {
+			return anthropic.Client{}, false, fmt.Errorf("ANTHROPIC_VERTEX_PROJECT_ID is required when CLAUDE_CODE_USE_VERTEX=1 (check backend deployment env vars)")
 		}
 
-		// Vertex enabled but project ID not configured for backend - fall back to API key
-		log.Printf("DisplayNameGen: Vertex enabled but ANTHROPIC_VERTEX_PROJECT_ID not set, falling back to API key for %s", projectName)
+		log.Printf("DisplayNameGen: Using Vertex AI for %s (region: %s, project: %s)", projectName, region, gcpProjectID)
+		client := anthropic.NewClient(
+			vertex.WithGoogleAuth(ctx, region, gcpProjectID),
+		)
+		return client, true, nil
 	}
 
-	// Fall back to API key from project secret
+	// Vertex not enabled - use API key from project secret
 	apiKey, err := getAPIKeyFromSecret(ctx, projectName)
 	if err != nil {
 		return anthropic.Client{}, false, fmt.Errorf("failed to get API key: %w", err)

@@ -139,8 +139,12 @@ func getAnthropicClient(ctx context.Context, projectName string) (anthropic.Clie
 		region := os.Getenv("CLOUD_ML_REGION")
 		gcpProjectID := os.Getenv("ANTHROPIC_VERTEX_PROJECT_ID")
 
-		if region == "" {
-			region = "us-central1" // Default region
+		// Handle region - "global" doesn't work for direct API calls (Claude CLI handles it internally)
+		// For the Go SDK, we need an actual regional endpoint.
+		// Supported regions: us-east5, us-central1, us-east4, europe-west1, etc.
+		// See: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
+		if region == "" || region == "global" {
+			region = "us-east5" // Default to us-east5 (widely supported for Claude models)
 		}
 		if gcpProjectID == "" {
 			return anthropic.Client{}, false, fmt.Errorf("ANTHROPIC_VERTEX_PROJECT_ID is required when CLAUDE_CODE_USE_VERTEX=1 (check backend deployment env vars)")

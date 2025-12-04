@@ -37,6 +37,11 @@ func InitK8sClients() error {
 		}
 	}
 
+	// Increase rate limits for parallel operations (default is QPS=5, Burst=10)
+	// This is needed for parallel SSAR checks when listing projects
+	config.QPS = 100
+	config.Burst = 200
+
 	// Create standard Kubernetes client
 	K8sClient, err = kubernetes.NewForConfig(config)
 	if err != nil {

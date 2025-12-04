@@ -227,12 +227,15 @@ func PostSessionMessageWS(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"status": "queued"})
 }
 
+// maxUserMessageChars is the maximum characters to include from user messages for display name generation
+const maxUserMessageChars = 1000
+
 // triggerDisplayNameGenerationIfNeeded checks if display name generation should be triggered
 // and initiates it asynchronously. This runs in a goroutine to not block the response.
 func triggerDisplayNameGenerationIfNeeded(projectName, sessionID string, messageBody map[string]interface{}) {
-	// Extract user message content
-	content, ok := messageBody["content"].(string)
-	if !ok || strings.TrimSpace(content) == "" {
+	// Extract current user message content
+	currentContent, ok := messageBody["content"].(string)
+	if !ok || strings.TrimSpace(currentContent) == "" {
 		return
 	}
 
@@ -248,39 +251,64 @@ func triggerDisplayNameGenerationIfNeeded(projectName, sessionID string, message
 		return
 	}
 
-	// Check if display name should be generated
+	// Check if display name should be generated (only if empty/unset)
 	if !handlers.ShouldGenerateDisplayName(spec) {
 		return
 	}
 
-	// Count existing user messages to check if this is the first
-	messages, err := retrieveMessagesFromS3(sessionID)
-	if err != nil {
-		log.Printf("DisplayNameGen: Failed to get messages for %s: %v", sessionID, err)
-		return
-	}
+	log.Printf("DisplayNameGen: Triggering generation for %s/%s", projectName, sessionID)
 
-	userMessageCount := 0
-	for _, m := range messages {
-		if m.Type == "user_message" {
-			userMessageCount++
-		}
-	}
-
-	// We already broadcast the current message, so count includes it
-	// If this is the first user message (count == 1 after broadcast), generate name
-	// Since we're checking before persist fully completes, check for <= 1
-	if userMessageCount > 1 {
-		log.Printf("DisplayNameGen: Skipping - not first user message (count: %d)", userMessageCount)
-		return
-	}
+	// Collect all user messages (existing + current) for better context
+	combinedContent := collectUserMessages(sessionID, currentContent)
 
 	// Extract session context for better name generation
 	sessionCtx := handlers.ExtractSessionContext(spec)
 
 	// Trigger async display name generation
-	log.Printf("DisplayNameGen: Triggering generation for %s/%s", projectName, sessionID)
-	handlers.GenerateDisplayNameAsync(projectName, sessionID, content, sessionCtx)
+	handlers.GenerateDisplayNameAsync(projectName, sessionID, combinedContent, sessionCtx)
+}
+
+// collectUserMessages fetches existing user messages from storage and combines with current message
+// Returns a truncated string of all user messages (max maxUserMessageChars)
+func collectUserMessages(sessionID, currentMessage string) string {
+	// Fetch existing messages from storage
+	existingMessages, err := retrieveMessagesFromS3(sessionID)
+	if err != nil {
+		log.Printf("DisplayNameGen: Failed to retrieve messages for %s: %v", sessionID, err)
+		// Fall back to just the current message
+		return truncateString(currentMessage, maxUserMessageChars)
+	}
+
+	// Collect user message contents
+	var userMessages []string
+	for _, msg := range existingMessages {
+		if msg.Type == "user_message" {
+			// Extract content from payload (Payload is already map[string]interface{})
+			if content, ok := msg.Payload["content"].(string); ok && strings.TrimSpace(content) != "" {
+				userMessages = append(userMessages, strings.TrimSpace(content))
+			}
+		}
+	}
+
+	// Add current message
+	userMessages = append(userMessages, strings.TrimSpace(currentMessage))
+
+	// Combine with separator
+	combined := strings.Join(userMessages, " | ")
+
+	// Truncate if too long
+	return truncateString(combined, maxUserMessageChars)
+}
+
+// truncateString truncates a string to maxLen characters, adding "..." if truncated
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // getSessionForDisplayName retrieves session data for display name generation

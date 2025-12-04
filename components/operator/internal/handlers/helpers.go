@@ -170,15 +170,6 @@ func mutateAgenticSessionStatus(sessionNamespace, name string, mutator func(stat
 	return nil
 }
 
-// updateAgenticSessionStatus merges the provided fields into status.
-func updateAgenticSessionStatus(sessionNamespace, name string, statusUpdate map[string]interface{}) error {
-	return mutateAgenticSessionStatus(sessionNamespace, name, func(status map[string]interface{}) {
-		for key, value := range statusUpdate {
-			status[key] = value
-		}
-	})
-}
-
 // ensureSessionIsInteractive forces spec.interactive=true so sessions can be restarted.
 func ensureSessionIsInteractive(sessionNamespace, name string) error {
 	gvr := types.GetAgenticSessionResource()

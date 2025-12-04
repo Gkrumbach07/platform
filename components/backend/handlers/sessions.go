@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -402,18 +403,13 @@ func filterSessionsBySearch(sessions []types.AgenticSession, search string) []ty
 
 // sortSessionsByCreationTime sorts sessions by creation timestamp (newest first)
 func sortSessionsByCreationTime(sessions []types.AgenticSession) {
-	// Sort in-place using bubble sort (simple for typical list sizes)
-	for i := 0; i < len(sessions)-1; i++ {
-		for j := i + 1; j < len(sessions); j++ {
-			// Extract creation timestamps
-			ts1 := getSessionCreationTimestamp(sessions[i])
-			ts2 := getSessionCreationTimestamp(sessions[j])
-			// Sort descending (newest first)
-			if ts1 < ts2 {
-				sessions[i], sessions[j] = sessions[j], sessions[i]
-			}
-		}
-	}
+	// Use sort.Slice for O(n log n) performance
+	sort.Slice(sessions, func(i, j int) bool {
+		ts1 := getSessionCreationTimestamp(sessions[i])
+		ts2 := getSessionCreationTimestamp(sessions[j])
+		// Sort descending (newest first) - RFC3339 timestamps sort lexicographically
+		return ts1 > ts2
+	})
 }
 
 // getSessionCreationTimestamp extracts the creation timestamp from session metadata

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -147,6 +148,7 @@ type accessCheckResult struct {
 	namespace *corev1.Namespace
 	hasAccess bool
 	err       error
+	cancelled bool // Context was cancelled before check completed
 }
 
 // parallelSSARWorkerCount is the number of concurrent SSAR checks
@@ -276,6 +278,15 @@ func performParallelSSARChecks(ctx context.Context, reqK8s *kubernetes.Clientset
 				// Check context cancellation
 				select {
 				case <-ctx.Done():
+					// Report cancellation so caller can return partial results
+					resultChan <- accessCheckResult{
+						namespace: ns,
+						cancelled: true,
+					}
+					// Drain remaining work items without processing
+					for range workChan {
+						resultChan <- accessCheckResult{cancelled: true}
+					}
 					return
 				default:
 				}
@@ -302,9 +313,14 @@ func performParallelSSARChecks(ctx context.Context, reqK8s *kubernetes.Clientset
 		close(resultChan)
 	}()
 
-	// Collect results
+	// Collect results and track cancellations
 	projects := make([]types.AmbientProject, 0, len(namespaces))
+	cancelledCount := 0
 	for result := range resultChan {
+		if result.cancelled {
+			cancelledCount++
+			continue
+		}
 		if result.err != nil {
 			log.Printf("Failed to check access for namespace %s: %v", result.namespace.Name, result.err)
 			continue
@@ -314,20 +330,20 @@ func performParallelSSARChecks(ctx context.Context, reqK8s *kubernetes.Clientset
 		}
 	}
 
+	if cancelledCount > 0 {
+		log.Printf("Warning: %d SSAR checks were cancelled due to context timeout", cancelledCount)
+	}
+
 	return projects
 }
 
 // sortProjectsByCreationTime sorts projects by creation timestamp (newest first)
 func sortProjectsByCreationTime(projects []types.AmbientProject) {
-	// Sort in-place by parsing timestamps
-	for i := 0; i < len(projects)-1; i++ {
-		for j := i + 1; j < len(projects); j++ {
-			// Parse timestamps for comparison (RFC3339 format sorts lexicographically)
-			if projects[i].CreationTimestamp < projects[j].CreationTimestamp {
-				projects[i], projects[j] = projects[j], projects[i]
-			}
-		}
-	}
+	// Use sort.Slice for O(n log n) performance
+	// RFC3339 timestamps sort lexicographically
+	sort.Slice(projects, func(i, j int) bool {
+		return projects[i].CreationTimestamp > projects[j].CreationTimestamp
+	})
 }
 
 // paginateProjects applies offset/limit pagination to the project list

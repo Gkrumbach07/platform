@@ -97,21 +97,21 @@ func IntPtr(i int) *int {
 
 // PaginationParams represents common pagination request parameters
 type PaginationParams struct {
-	Limit    int    `form:"limit"`     // Number of items per page (default: 20, max: 100)
-	Offset   int    `form:"offset"`    // Offset for offset-based pagination
-	Continue string `form:"continue"`  // Continuation token for k8s-style pagination
-	Search   string `form:"search"`    // Search/filter term
+	Limit    int    `form:"limit"`    // Number of items per page (default: 20, max: 100)
+	Offset   int    `form:"offset"`   // Offset for offset-based pagination
+	Continue string `form:"continue"` // Continuation token for k8s-style pagination
+	Search   string `form:"search"`   // Search/filter term
 }
 
 // PaginatedResponse is a generic paginated response structure
 type PaginatedResponse struct {
-	Items       interface{} `json:"items"`
-	TotalCount  int         `json:"totalCount"`
-	Limit       int         `json:"limit"`
-	Offset      int         `json:"offset"`
-	HasMore     bool        `json:"hasMore"`
-	Continue    string      `json:"continue,omitempty"`    // For k8s-style pagination
-	NextOffset  *int        `json:"nextOffset,omitempty"`  // For offset-based pagination
+	Items      interface{} `json:"items"`
+	TotalCount int         `json:"totalCount"`
+	Limit      int         `json:"limit"`
+	Offset     int         `json:"offset"`
+	HasMore    bool        `json:"hasMore"`
+	Continue   string      `json:"continue,omitempty"`   // For k8s-style pagination
+	NextOffset *int        `json:"nextOffset,omitempty"` // For offset-based pagination
 }
 
 // DefaultPaginationLimit is the default number of items per page

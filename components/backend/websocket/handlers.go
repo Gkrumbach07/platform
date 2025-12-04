@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // WebSocket upgrader
@@ -189,6 +191,7 @@ func GetSessionMessagesWS(c *gin.Context) {
 // Accepts a generic JSON body. If a "type" string is provided, it will be used.
 // Otherwise, defaults to "user_message" and wraps body under payload.
 func PostSessionMessageWS(c *gin.Context) {
+	projectName := c.Param("projectName")
 	sessionID := c.Param("sessionId")
 
 	var body map[string]interface{}
@@ -215,7 +218,86 @@ func PostSessionMessageWS(c *gin.Context) {
 	// Broadcast to session listeners (runner) and persist
 	Hub.broadcast <- message
 
+	// Check if we should auto-generate a display name
+	// Only for user_message type (not control messages like interrupt/end_session)
+	if msgType == "user_message" {
+		go triggerDisplayNameGenerationIfNeeded(projectName, sessionID, body)
+	}
+
 	c.JSON(http.StatusAccepted, gin.H{"status": "queued"})
+}
+
+// triggerDisplayNameGenerationIfNeeded checks if display name generation should be triggered
+// and initiates it asynchronously. This runs in a goroutine to not block the response.
+func triggerDisplayNameGenerationIfNeeded(projectName, sessionID string, messageBody map[string]interface{}) {
+	// Extract user message content
+	content, ok := messageBody["content"].(string)
+	if !ok || strings.TrimSpace(content) == "" {
+		return
+	}
+
+	// Get session to check if displayName is set and get context
+	session, err := getSessionForDisplayName(projectName, sessionID)
+	if err != nil {
+		log.Printf("DisplayNameGen: Failed to get session %s/%s: %v", projectName, sessionID, err)
+		return
+	}
+
+	spec, ok := session["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Check if display name should be generated
+	if !handlers.ShouldGenerateDisplayName(spec) {
+		return
+	}
+
+	// Count existing user messages to check if this is the first
+	messages, err := retrieveMessagesFromS3(sessionID)
+	if err != nil {
+		log.Printf("DisplayNameGen: Failed to get messages for %s: %v", sessionID, err)
+		return
+	}
+
+	userMessageCount := 0
+	for _, m := range messages {
+		if m.Type == "user_message" {
+			userMessageCount++
+		}
+	}
+
+	// We already broadcast the current message, so count includes it
+	// If this is the first user message (count == 1 after broadcast), generate name
+	// Since we're checking before persist fully completes, check for <= 1
+	if userMessageCount > 1 {
+		log.Printf("DisplayNameGen: Skipping - not first user message (count: %d)", userMessageCount)
+		return
+	}
+
+	// Extract session context for better name generation
+	sessionCtx := handlers.ExtractSessionContext(spec)
+
+	// Trigger async display name generation
+	log.Printf("DisplayNameGen: Triggering generation for %s/%s", projectName, sessionID)
+	handlers.GenerateDisplayNameAsync(projectName, sessionID, content, sessionCtx)
+}
+
+// getSessionForDisplayName retrieves session data for display name generation
+func getSessionForDisplayName(projectName, sessionID string) (map[string]interface{}, error) {
+	if handlers.DynamicClient == nil {
+		return nil, fmt.Errorf("dynamic client not initialized")
+	}
+
+	gvr := handlers.GetAgenticSessionV1Alpha1Resource()
+	item, err := handlers.DynamicClient.Resource(gvr).Namespace(projectName).Get(
+		context.Background(), sessionID, metav1.GetOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return item.Object, nil
 }
 
 // NOTE: GetSessionMessagesClaudeFormat removed - session continuation now uses

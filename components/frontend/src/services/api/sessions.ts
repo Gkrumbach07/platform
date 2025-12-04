@@ -200,3 +200,17 @@ export async function getSessionK8sResources(
 }> {
   return apiClient.get(`/projects/${projectName}/agentic-sessions/${sessionName}/k8s-resources`);
 }
+
+/**
+ * Update the display name of a session
+ */
+export async function updateSessionDisplayName(
+  projectName: string,
+  sessionName: string,
+  displayName: string
+): Promise<AgenticSession> {
+  return apiClient.put<AgenticSession, { displayName: string }>(
+    `/projects/${projectName}/agentic-sessions/${sessionName}/displayname`,
+    { displayName }
+  );
+}

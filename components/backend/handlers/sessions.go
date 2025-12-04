@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	authnv1 "k8s.io/api/authentication/v1"
+	authzv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1117,13 +1118,47 @@ func UpdateSession(c *gin.Context) {
 func UpdateSessionDisplayName(c *gin.Context) {
 	project := c.GetString("project")
 	sessionName := c.Param("sessionName")
-	_, reqDyn := GetK8sClientsForRequest(c)
+	reqK8s, reqDyn := GetK8sClientsForRequest(c)
+
+	// Check if user has valid auth (reqDyn is nil if token is invalid)
+	if reqK8s == nil || reqDyn == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing authentication token"})
+		return
+	}
+
+	// RBAC check: verify user has update permission on agenticsessions in this namespace
+	ssar := &authzv1.SelfSubjectAccessReview{
+		Spec: authzv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authzv1.ResourceAttributes{
+				Group:     "vteam.ambient-code",
+				Resource:  "agenticsessions",
+				Verb:      "update",
+				Namespace: project,
+			},
+		},
+	}
+	res, err := reqK8s.AuthorizationV1().SelfSubjectAccessReviews().Create(c.Request.Context(), ssar, v1.CreateOptions{})
+	if err != nil {
+		log.Printf("RBAC check failed for update session display name in project %s: %v", project, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify permissions"})
+		return
+	}
+	if !res.Status.Allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to update session in this project"})
+		return
+	}
 
 	var req struct {
 		DisplayName string `json:"displayName" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate display name (length, sanitization)
+	if validationErr := ValidateDisplayName(req.DisplayName); validationErr != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": validationErr})
 		return
 	}
 
@@ -1141,13 +1176,24 @@ func UpdateSessionDisplayName(c *gin.Context) {
 		return
 	}
 
-	// Update only displayName in spec
-	spec, ok := item.Object["spec"].(map[string]interface{})
-	if !ok {
+	// Use unstructured helper for safe type access (per CLAUDE.md guidelines)
+	spec, found, err := unstructured.NestedMap(item.Object, "spec")
+	if err != nil {
+		log.Printf("Failed to get spec from session %s in project %s: %v", sessionName, project, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse session spec"})
+		return
+	}
+	if !found {
 		spec = make(map[string]interface{})
-		item.Object["spec"] = spec
 	}
 	spec["displayName"] = req.DisplayName
+
+	// Set the updated spec back using unstructured helper
+	if err := unstructured.SetNestedMap(item.Object, spec, "spec"); err != nil {
+		log.Printf("Failed to set spec for session %s in project %s: %v", sessionName, project, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update session spec"})
+		return
+	}
 
 	// Persist the change
 	updated, err := reqDyn.Resource(gvr).Namespace(project).Update(context.TODO(), item, v1.UpdateOptions{})
@@ -1157,16 +1203,18 @@ func UpdateSessionDisplayName(c *gin.Context) {
 		return
 	}
 
-	// Respond with updated session summary
+	// Respond with updated session summary using safe type access
 	session := types.AgenticSession{
 		APIVersion: updated.GetAPIVersion(),
 		Kind:       updated.GetKind(),
-		Metadata:   updated.Object["metadata"].(map[string]interface{}),
 	}
-	if s, ok := updated.Object["spec"].(map[string]interface{}); ok {
+	if meta, found, _ := unstructured.NestedMap(updated.Object, "metadata"); found {
+		session.Metadata = meta
+	}
+	if s, found, _ := unstructured.NestedMap(updated.Object, "spec"); found {
 		session.Spec = parseSpec(s)
 	}
-	if st, ok := updated.Object["status"].(map[string]interface{}); ok {
+	if st, found, _ := unstructured.NestedMap(updated.Object, "status"); found {
 		session.Status = parseStatus(st)
 	}
 

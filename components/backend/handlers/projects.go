@@ -160,12 +160,16 @@ const parallelSSARWorkerCount = 10
 // Supports pagination via limit/offset and search filtering.
 // SSAR checks are performed in parallel for improved performance.
 func ListProjects(c *gin.Context) {
+	startTime := time.Now()
+	log.Printf("[ListProjects] START - request received")
+
 	reqK8s, _ := GetK8sClientsForRequest(c)
 
 	if reqK8s == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
+	log.Printf("[ListProjects] Auth check completed in %v", time.Since(startTime))
 
 	// Parse pagination parameters
 	var params types.PaginationParams
@@ -186,6 +190,7 @@ func ListProjects(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased timeout for parallel checks
 	defer cancel()
 
+	nsListStart := time.Now()
 	nsList, err := K8sClientProjects.CoreV1().Namespaces().List(ctx, v1.ListOptions{
 		LabelSelector: "ambient-code.io/managed=true",
 	})
@@ -194,15 +199,22 @@ func ListProjects(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list projects"})
 		return
 	}
+	log.Printf("[ListProjects] Namespace list completed in %v - found %d namespaces", time.Since(nsListStart), len(nsList.Items))
 
 	// Pre-filter by search term if provided (before SSAR checks to reduce work)
+	filterStart := time.Now()
 	filteredNamespaces := filterNamespacesBySearch(nsList.Items, params.Search, isOpenShift)
+	log.Printf("[ListProjects] Search filter completed in %v - %d namespaces after filter (search=%q)", time.Since(filterStart), len(filteredNamespaces), params.Search)
 
 	// Perform parallel SSAR checks using worker pool
+	ssarStart := time.Now()
 	accessibleProjects := performParallelSSARChecks(ctx, reqK8s, filteredNamespaces, isOpenShift)
+	log.Printf("[ListProjects] SSAR checks completed in %v - %d accessible projects from %d namespaces (workers=%d)", time.Since(ssarStart), len(accessibleProjects), len(filteredNamespaces), parallelSSARWorkerCount)
 
 	// Sort by creation timestamp (newest first)
+	sortStart := time.Now()
 	sortProjectsByCreationTime(accessibleProjects)
+	log.Printf("[ListProjects] Sort completed in %v", time.Since(sortStart))
 
 	// Apply pagination
 	totalCount := len(accessibleProjects)
@@ -219,6 +231,7 @@ func ListProjects(c *gin.Context) {
 		response.NextOffset = &nextOffset
 	}
 
+	log.Printf("[ListProjects] TOTAL completed in %v - returning %d items (total=%d, offset=%d, limit=%d)", time.Since(startTime), len(paginatedProjects), totalCount, params.Offset, params.Limit)
 	c.JSON(http.StatusOK, response)
 }
 

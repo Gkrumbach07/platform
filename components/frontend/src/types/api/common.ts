@@ -15,6 +15,35 @@ export type ApiError = {
 
 export type ApiResult<T> = ApiResponse<T> | ApiError;
 
+/**
+ * Pagination request parameters
+ */
+export type PaginationParams = {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  continue?: string;
+};
+
+/**
+ * Paginated response structure from the backend
+ */
+export type PaginatedResponse<T> = {
+  items: T[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  continue?: string;
+  nextOffset?: number;
+};
+
+/**
+ * Default pagination values
+ */
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_PAGE_SIZE = 100;
+
 export function isApiError<T>(result: ApiResult<T>): result is ApiError {
   return 'error' in result && result.error !== undefined;
 }

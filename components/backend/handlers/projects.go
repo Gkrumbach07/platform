@@ -142,9 +142,21 @@ func GetClusterInfo(c *gin.Context) {
 	})
 }
 
+// accessCheckResult holds the result of a parallel access check
+type accessCheckResult struct {
+	namespace *corev1.Namespace
+	hasAccess bool
+	err       error
+}
+
+// parallelSSARWorkerCount is the number of concurrent SSAR checks
+const parallelSSARWorkerCount = 10
+
 // ListProjects handles GET /projects
 // Lists Namespaces (both platforms) using backend SA with label selector,
-// then uses SubjectAccessReview to verify user access to each namespace
+// then uses SubjectAccessReview to verify user access to each namespace.
+// Supports pagination via limit/offset and search filtering.
+// SSAR checks are performed in parallel for improved performance.
 func ListProjects(c *gin.Context) {
 	reqK8s, _ := GetK8sClientsForRequest(c)
 
@@ -153,6 +165,14 @@ func ListProjects(c *gin.Context) {
 		return
 	}
 
+	// Parse pagination parameters
+	var params types.PaginationParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid pagination parameters"})
+		return
+	}
+	types.NormalizePaginationParams(&params)
+
 	// List namespaces using backend SA (both platforms)
 	if K8sClientProjects == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list projects"})
@@ -160,9 +180,8 @@ func ListProjects(c *gin.Context) {
 	}
 
 	isOpenShift := isOpenShiftCluster()
-	projects := []types.AmbientProject{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultK8sTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased timeout for parallel checks
 	defer cancel()
 
 	nsList, err := K8sClientProjects.CoreV1().Namespaces().List(ctx, v1.ListOptions{
@@ -174,21 +193,163 @@ func ListProjects(c *gin.Context) {
 		return
 	}
 
-	// Filter to only namespaces where user has access
-	// Use SubjectAccessReview - checks ALL RBAC sources (any RoleBinding, group, etc.)
-	for _, ns := range nsList.Items {
-		hasAccess, err := checkUserCanAccessNamespace(reqK8s, ns.Name)
-		if err != nil {
-			log.Printf("Failed to check access for namespace %s: %v", ns.Name, err)
+	// Pre-filter by search term if provided (before SSAR checks to reduce work)
+	filteredNamespaces := filterNamespacesBySearch(nsList.Items, params.Search, isOpenShift)
+
+	// Perform parallel SSAR checks using worker pool
+	accessibleProjects := performParallelSSARChecks(ctx, reqK8s, filteredNamespaces, isOpenShift)
+
+	// Sort by creation timestamp (newest first)
+	sortProjectsByCreationTime(accessibleProjects)
+
+	// Apply pagination
+	totalCount := len(accessibleProjects)
+	paginatedProjects, hasMore, nextOffset := paginateProjects(accessibleProjects, params.Offset, params.Limit)
+
+	response := types.PaginatedResponse{
+		Items:      paginatedProjects,
+		TotalCount: totalCount,
+		Limit:      params.Limit,
+		Offset:     params.Offset,
+		HasMore:    hasMore,
+	}
+	if hasMore {
+		response.NextOffset = &nextOffset
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// filterNamespacesBySearch filters namespaces by search term (name or displayName)
+func filterNamespacesBySearch(namespaces []corev1.Namespace, search string, isOpenShift bool) []corev1.Namespace {
+	if search == "" {
+		return namespaces
+	}
+
+	searchLower := strings.ToLower(search)
+	filtered := make([]corev1.Namespace, 0, len(namespaces))
+
+	for _, ns := range namespaces {
+		// Match against name
+		if strings.Contains(strings.ToLower(ns.Name), searchLower) {
+			filtered = append(filtered, ns)
 			continue
 		}
 
-		if hasAccess {
-			projects = append(projects, projectFromNamespace(&ns, isOpenShift))
+		// On OpenShift, also match against displayName
+		if isOpenShift && ns.Annotations != nil {
+			displayName := ns.Annotations["openshift.io/display-name"]
+			if strings.Contains(strings.ToLower(displayName), searchLower) {
+				filtered = append(filtered, ns)
+				continue
+			}
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"items": projects})
+	return filtered
+}
+
+// performParallelSSARChecks performs SSAR checks in parallel using a worker pool
+func performParallelSSARChecks(ctx context.Context, reqK8s *kubernetes.Clientset, namespaces []corev1.Namespace, isOpenShift bool) []types.AmbientProject {
+	if len(namespaces) == 0 {
+		return []types.AmbientProject{}
+	}
+
+	// Determine worker count (don't exceed number of namespaces)
+	workerCount := parallelSSARWorkerCount
+	if len(namespaces) < workerCount {
+		workerCount = len(namespaces)
+	}
+
+	// Channel for namespace work items
+	workChan := make(chan *corev1.Namespace, len(namespaces))
+	// Channel for results
+	resultChan := make(chan accessCheckResult, len(namespaces))
+
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ns := range workChan {
+				// Check context cancellation
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				hasAccess, err := checkUserCanAccessNamespace(reqK8s, ns.Name)
+				resultChan <- accessCheckResult{
+					namespace: ns,
+					hasAccess: hasAccess,
+					err:       err,
+				}
+			}
+		}()
+	}
+
+	// Send work items
+	for i := range namespaces {
+		workChan <- &namespaces[i]
+	}
+	close(workChan)
+
+	// Wait for all workers to finish and close result channel
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	projects := make([]types.AmbientProject, 0, len(namespaces))
+	for result := range resultChan {
+		if result.err != nil {
+			log.Printf("Failed to check access for namespace %s: %v", result.namespace.Name, result.err)
+			continue
+		}
+		if result.hasAccess {
+			projects = append(projects, projectFromNamespace(result.namespace, isOpenShift))
+		}
+	}
+
+	return projects
+}
+
+// sortProjectsByCreationTime sorts projects by creation timestamp (newest first)
+func sortProjectsByCreationTime(projects []types.AmbientProject) {
+	// Sort in-place by parsing timestamps
+	for i := 0; i < len(projects)-1; i++ {
+		for j := i + 1; j < len(projects); j++ {
+			// Parse timestamps for comparison (RFC3339 format sorts lexicographically)
+			if projects[i].CreationTimestamp < projects[j].CreationTimestamp {
+				projects[i], projects[j] = projects[j], projects[i]
+			}
+		}
+	}
+}
+
+// paginateProjects applies offset/limit pagination to the project list
+func paginateProjects(projects []types.AmbientProject, offset, limit int) ([]types.AmbientProject, bool, int) {
+	total := len(projects)
+
+	// Handle offset beyond available items
+	if offset >= total {
+		return []types.AmbientProject{}, false, 0
+	}
+
+	// Calculate end index
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+
+	// Determine if there are more items
+	hasMore := end < total
+	nextOffset := end
+
+	return projects[offset:end], hasMore, nextOffset
 }
 
 // projectFromNamespace converts a Kubernetes Namespace to AmbientProject

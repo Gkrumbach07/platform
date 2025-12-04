@@ -9,27 +9,44 @@ import type {
   CreateAgenticSessionRequest,
   CreateAgenticSessionResponse,
   GetAgenticSessionResponse,
-  ListAgenticSessionsResponse,
+  ListAgenticSessionsPaginatedResponse,
   StopAgenticSessionRequest,
   StopAgenticSessionResponse,
   CloneAgenticSessionRequest,
   CloneAgenticSessionResponse,
   Message,
   GetSessionMessagesResponse,
+  PaginationParams,
 } from '@/types/api';
 
 /**
- * List sessions for a project
+ * List sessions for a project with pagination support
+ */
+export async function listSessionsPaginated(
+  projectName: string,
+  params: PaginationParams = {}
+): Promise<ListAgenticSessionsPaginatedResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.limit) searchParams.set('limit', params.limit.toString());
+  if (params.offset) searchParams.set('offset', params.offset.toString());
+  if (params.search) searchParams.set('search', params.search);
+
+  const queryString = searchParams.toString();
+  const url = queryString
+    ? `/projects/${projectName}/agentic-sessions?${queryString}`
+    : `/projects/${projectName}/agentic-sessions`;
+
+  return apiClient.get<ListAgenticSessionsPaginatedResponse>(url);
+}
+
+/**
+ * List sessions for a project (legacy - fetches all without pagination)
+ * @deprecated Use listSessionsPaginated for better performance
  */
 export async function listSessions(projectName: string): Promise<AgenticSession[]> {
-  const response = await apiClient.get<ListAgenticSessionsResponse | AgenticSession[]>(
-    `/projects/${projectName}/agentic-sessions`
-  );
-  // Handle both wrapped and unwrapped responses
-  if (Array.isArray(response)) {
-    return response;
-  }
-  return response.items || [];
+  // For backward compatibility, fetch with a high limit
+  const response = await listSessionsPaginated(projectName, { limit: 100 });
+  return response.items;
 }
 
 /**

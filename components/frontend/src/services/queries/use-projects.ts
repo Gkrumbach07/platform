@@ -2,13 +2,14 @@
  * React Query hooks for projects
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import * as projectsApi from '../api/projects';
 import type {
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
   PermissionAssignment,
+  PaginationParams,
 } from '@/types/api';
 
 /**
@@ -17,14 +18,26 @@ import type {
 export const projectKeys = {
   all: ['projects'] as const,
   lists: () => [...projectKeys.all, 'list'] as const,
-  list: () => [...projectKeys.lists()] as const,
+  list: (params?: PaginationParams) => [...projectKeys.lists(), params ?? {}] as const,
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (name: string) => [...projectKeys.details(), name] as const,
   permissions: (name: string) => [...projectKeys.detail(name), 'permissions'] as const,
 };
 
 /**
- * Hook to fetch all projects
+ * Hook to fetch projects with pagination support
+ */
+export function useProjectsPaginated(params: PaginationParams = {}) {
+  return useQuery({
+    queryKey: projectKeys.list(params),
+    queryFn: () => projectsApi.listProjectsPaginated(params),
+    placeholderData: keepPreviousData, // Keep previous data while fetching new page
+  });
+}
+
+/**
+ * Hook to fetch all projects (legacy - no pagination)
+ * @deprecated Use useProjectsPaginated for better performance
  */
 export function useProjects() {
   return useQuery({

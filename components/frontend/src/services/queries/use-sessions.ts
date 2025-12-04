@@ -2,13 +2,14 @@
  * React Query hooks for agentic sessions
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import * as sessionsApi from '../api/sessions';
 import type {
   AgenticSession,
   CreateAgenticSessionRequest,
   StopAgenticSessionRequest,
   CloneAgenticSessionRequest,
+  PaginationParams,
 } from '@/types/api';
 
 /**
@@ -17,7 +18,8 @@ import type {
 export const sessionKeys = {
   all: ['sessions'] as const,
   lists: () => [...sessionKeys.all, 'list'] as const,
-  list: (projectName: string) => [...sessionKeys.lists(), projectName] as const,
+  list: (projectName: string, params?: PaginationParams) =>
+    [...sessionKeys.lists(), projectName, params ?? {}] as const,
   details: () => [...sessionKeys.all, 'detail'] as const,
   detail: (projectName: string, sessionName: string) =>
     [...sessionKeys.details(), projectName, sessionName] as const,
@@ -26,7 +28,20 @@ export const sessionKeys = {
 };
 
 /**
- * Hook to fetch sessions for a project
+ * Hook to fetch sessions for a project with pagination support
+ */
+export function useSessionsPaginated(projectName: string, params: PaginationParams = {}) {
+  return useQuery({
+    queryKey: sessionKeys.list(projectName, params),
+    queryFn: () => sessionsApi.listSessionsPaginated(projectName, params),
+    enabled: !!projectName,
+    placeholderData: keepPreviousData, // Keep previous data while fetching new page
+  });
+}
+
+/**
+ * Hook to fetch sessions for a project (legacy - no pagination)
+ * @deprecated Use useSessionsPaginated for better performance
  */
 export function useSessions(projectName: string) {
   return useQuery({

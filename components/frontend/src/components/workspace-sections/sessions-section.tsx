@@ -1,26 +1,59 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Plus, RefreshCw, MoreVertical, Square, Trash2, ArrowRight, Brain } from 'lucide-react';
+import { Plus, RefreshCw, MoreVertical, Square, Trash2, ArrowRight, Brain, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import { EmptyState } from '@/components/empty-state';
 import { SessionPhaseBadge } from '@/components/status-badge';
 import { CreateSessionDialog } from '@/components/create-session-dialog';
 
-import { useSessions, useStopSession, useDeleteSession, useContinueSession } from '@/services/queries';
+import { useSessionsPaginated, useStopSession, useDeleteSession, useContinueSession } from '@/services/queries';
 import { successToast, errorToast } from '@/hooks/use-toast';
+import { useDebounce } from '@/hooks/use-debounce';
+import { DEFAULT_PAGE_SIZE } from '@/types/api';
 
 type SessionsSectionProps = {
   projectName: string;
 };
 
 export function SessionsSection({ projectName }: SessionsSectionProps) {
-  const { data: sessions = [], isLoading, refetch } = useSessions(projectName);
+  // Pagination and search state
+  const [searchInput, setSearchInput] = useState('');
+  const [offset, setOffset] = useState(0);
+  const limit = DEFAULT_PAGE_SIZE;
+
+  // Debounce search to avoid too many API calls
+  const debouncedSearch = useDebounce(searchInput, 300);
+
+  // Reset offset when search changes
+  useEffect(() => {
+    setOffset(0);
+  }, [debouncedSearch]);
+
+  // React Query hooks with pagination
+  const {
+    data: paginatedData,
+    isFetching,
+    refetch,
+  } = useSessionsPaginated(projectName, {
+    limit,
+    offset,
+    search: debouncedSearch || undefined,
+  });
+
+  const sessions = paginatedData?.items ?? [];
+  const totalCount = paginatedData?.totalCount ?? 0;
+  const hasMore = paginatedData?.hasMore ?? false;
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.ceil(totalCount / limit);
+
   const stopSessionMutation = useStopSession();
   const deleteSessionMutation = useDeleteSession();
   const continueSessionMutation = useContinueSession();
@@ -68,11 +101,21 @@ export function SessionsSection({ projectName }: SessionsSectionProps) {
     );
   };
 
-  const sortedSessions = [...sessions].sort((a, b) => {
-    const aTime = a?.metadata?.creationTimestamp ? new Date(a.metadata.creationTimestamp).getTime() : 0;
-    const bTime = b?.metadata?.creationTimestamp ? new Date(b.metadata.creationTimestamp).getTime() : 0;
-    return bTime - aTime;
-  });
+  const handleNextPage = () => {
+    if (hasMore) {
+      setOffset(offset + limit);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (offset > 0) {
+      setOffset(Math.max(0, offset - limit));
+    }
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchInput(e.target.value);
+  };
 
   return (
     <Card className="flex-1">
@@ -85,8 +128,8 @@ export function SessionsSection({ projectName }: SessionsSectionProps) {
             </CardDescription>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
             <CreateSessionDialog
@@ -101,93 +144,143 @@ export function SessionsSection({ projectName }: SessionsSectionProps) {
             />
           </div>
         </div>
+        {/* Search input */}
+        <div className="relative mt-4 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search sessions..."
+            value={searchInput}
+            onChange={handleSearchChange}
+            className="pl-9"
+          />
+        </div>
       </CardHeader>
       <CardContent>
-        {sessions.length === 0 ? (
+        {sessions.length === 0 && !debouncedSearch ? (
           <EmptyState
             icon={Brain}
             title="No sessions found"
             description="Create your first agentic session"
           />
+        ) : sessions.length === 0 && debouncedSearch ? (
+          <EmptyState
+            icon={Search}
+            title="No matching sessions"
+            description={`No sessions found matching "${debouncedSearch}"`}
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[180px]">Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead className="hidden md:table-cell">Model</TableHead>
-                  <TableHead className="hidden lg:table-cell">Created</TableHead>
-                  <TableHead className="hidden xl:table-cell">Cost</TableHead>
-                  <TableHead className="w-[50px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedSessions.map((session) => {
-                  const sessionName = session.metadata.name;
-                  const phase = session.status?.phase || 'Pending';
-                  const isActionPending =
-                    (stopSessionMutation.isPending && stopSessionMutation.variables?.sessionName === sessionName) ||
-                    (deleteSessionMutation.isPending && deleteSessionMutation.variables?.sessionName === sessionName);
+          <>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[180px]">Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Mode</TableHead>
+                    <TableHead className="hidden md:table-cell">Model</TableHead>
+                    <TableHead className="hidden lg:table-cell">Created</TableHead>
+                    <TableHead className="hidden xl:table-cell">Cost</TableHead>
+                    <TableHead className="w-[50px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.map((session) => {
+                    const sessionName = session.metadata.name;
+                    const phase = session.status?.phase || 'Pending';
+                    const isActionPending =
+                      (stopSessionMutation.isPending && stopSessionMutation.variables?.sessionName === sessionName) ||
+                      (deleteSessionMutation.isPending && deleteSessionMutation.variables?.sessionName === sessionName);
 
-                  return (
-                    <TableRow key={session.metadata?.uid || session.metadata?.name}>
-                      <TableCell className="font-medium min-w-[180px]">
-                        <Link
-                          href={`/projects/${projectName}/sessions/${session.metadata.name}`}
-                          className="text-link hover:underline hover:text-link-hover transition-colors block"
-                        >
-                          <div>
-                            <div className="font-medium">{session.spec.displayName || session.metadata.name}</div>
-                            {session.spec.displayName && (
-                              <div className="text-xs text-muted-foreground font-normal">{session.metadata.name}</div>
-                            )}
-                          </div>
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <SessionPhaseBadge phase={phase} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xs px-2 py-1 rounded border bg-muted/50">
-                          {session.spec?.interactive ? 'Interactive' : 'Headless'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <span className="text-sm text-muted-foreground truncate max-w-[120px] block">
-                          {session.spec.llmSettings.model}
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        {session.metadata?.creationTimestamp &&
-                          formatDistanceToNow(new Date(session.metadata.creationTimestamp), { addSuffix: true })}
-                      </TableCell>
-                      <TableCell className="hidden xl:table-cell">
-                        {/* total_cost_usd removed from simplified status */}
-                        <span className="text-sm text-muted-foreground/60">—</span>
-                      </TableCell>
-                      <TableCell>
-                        {isActionPending ? (
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled>
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                          </Button>
-                        ) : (
-                          <SessionActions
-                            sessionName={sessionName}
-                            phase={phase}
-                            onStop={handleStop}
-                            onContinue={handleContinue}
-                            onDelete={handleDelete}
-                          />
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+                    return (
+                      <TableRow key={session.metadata?.uid || session.metadata?.name}>
+                        <TableCell className="font-medium min-w-[180px]">
+                          <Link
+                            href={`/projects/${projectName}/sessions/${session.metadata.name}`}
+                            className="text-link hover:underline hover:text-link-hover transition-colors block"
+                          >
+                            <div>
+                              <div className="font-medium">{session.spec.displayName || session.metadata.name}</div>
+                              {session.spec.displayName && (
+                                <div className="text-xs text-muted-foreground font-normal">{session.metadata.name}</div>
+                              )}
+                            </div>
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <SessionPhaseBadge phase={phase} />
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs px-2 py-1 rounded border bg-muted/50">
+                            {session.spec?.interactive ? 'Interactive' : 'Headless'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <span className="text-sm text-muted-foreground truncate max-w-[120px] block">
+                            {session.spec.llmSettings.model}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          {session.metadata?.creationTimestamp &&
+                            formatDistanceToNow(new Date(session.metadata.creationTimestamp), { addSuffix: true })}
+                        </TableCell>
+                        <TableCell className="hidden xl:table-cell">
+                          {/* total_cost_usd removed from simplified status */}
+                          <span className="text-sm text-muted-foreground/60">—</span>
+                        </TableCell>
+                        <TableCell>
+                          {isActionPending ? (
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled>
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            </Button>
+                          ) : (
+                            <SessionActions
+                              sessionName={sessionName}
+                              phase={phase}
+                              onStop={handleStop}
+                              onContinue={handleContinue}
+                              onDelete={handleDelete}
+                            />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Pagination controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4 border-t mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Showing {offset + 1}-{Math.min(offset + limit, totalCount)} of {totalCount} sessions
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevPage}
+                    disabled={offset === 0 || isFetching}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground px-2">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextPage}
+                    disabled={!hasMore || isFetching}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

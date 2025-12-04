@@ -300,7 +300,21 @@ func ListSessions(c *gin.Context) {
 	_ = reqK8s
 	gvr := GetAgenticSessionV1Alpha1Resource()
 
-	list, err := reqDyn.Resource(gvr).Namespace(project).List(context.TODO(), v1.ListOptions{})
+	// Parse pagination parameters
+	var params types.PaginationParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid pagination parameters"})
+		return
+	}
+	types.NormalizePaginationParams(&params)
+
+	// Build list options with pagination
+	// Note: Kubernetes List with Limit returns a continue token for server-side pagination
+	// We use offset-based pagination on top of fetching all items for search/sort flexibility
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	list, err := reqDyn.Resource(gvr).Namespace(project).List(ctx, v1.ListOptions{})
 	if err != nil {
 		log.Printf("Failed to list agentic sessions in project %s: %v", project, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list agentic sessions"})
@@ -326,7 +340,110 @@ func ListSessions(c *gin.Context) {
 		sessions = append(sessions, session)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"items": sessions})
+	// Apply search filter if provided
+	if params.Search != "" {
+		sessions = filterSessionsBySearch(sessions, params.Search)
+	}
+
+	// Sort by creation timestamp (newest first)
+	sortSessionsByCreationTime(sessions)
+
+	// Apply pagination
+	totalCount := len(sessions)
+	paginatedSessions, hasMore, nextOffset := paginateSessions(sessions, params.Offset, params.Limit)
+
+	response := types.PaginatedResponse{
+		Items:      paginatedSessions,
+		TotalCount: totalCount,
+		Limit:      params.Limit,
+		Offset:     params.Offset,
+		HasMore:    hasMore,
+	}
+	if hasMore {
+		response.NextOffset = &nextOffset
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// filterSessionsBySearch filters sessions by search term (name or displayName)
+func filterSessionsBySearch(sessions []types.AgenticSession, search string) []types.AgenticSession {
+	if search == "" {
+		return sessions
+	}
+
+	searchLower := strings.ToLower(search)
+	filtered := make([]types.AgenticSession, 0, len(sessions))
+
+	for _, session := range sessions {
+		// Match against name
+		if name, ok := session.Metadata["name"].(string); ok {
+			if strings.Contains(strings.ToLower(name), searchLower) {
+				filtered = append(filtered, session)
+				continue
+			}
+		}
+
+		// Match against displayName in spec
+		if strings.Contains(strings.ToLower(session.Spec.DisplayName), searchLower) {
+			filtered = append(filtered, session)
+			continue
+		}
+
+		// Match against initialPrompt
+		if strings.Contains(strings.ToLower(session.Spec.InitialPrompt), searchLower) {
+			filtered = append(filtered, session)
+			continue
+		}
+	}
+
+	return filtered
+}
+
+// sortSessionsByCreationTime sorts sessions by creation timestamp (newest first)
+func sortSessionsByCreationTime(sessions []types.AgenticSession) {
+	// Sort in-place using bubble sort (simple for typical list sizes)
+	for i := 0; i < len(sessions)-1; i++ {
+		for j := i + 1; j < len(sessions); j++ {
+			// Extract creation timestamps
+			ts1 := getSessionCreationTimestamp(sessions[i])
+			ts2 := getSessionCreationTimestamp(sessions[j])
+			// Sort descending (newest first)
+			if ts1 < ts2 {
+				sessions[i], sessions[j] = sessions[j], sessions[i]
+			}
+		}
+	}
+}
+
+// getSessionCreationTimestamp extracts the creation timestamp from session metadata
+func getSessionCreationTimestamp(session types.AgenticSession) string {
+	if ts, ok := session.Metadata["creationTimestamp"].(string); ok {
+		return ts
+	}
+	return ""
+}
+
+// paginateSessions applies offset/limit pagination to the session list
+func paginateSessions(sessions []types.AgenticSession, offset, limit int) ([]types.AgenticSession, bool, int) {
+	total := len(sessions)
+
+	// Handle offset beyond available items
+	if offset >= total {
+		return []types.AgenticSession{}, false, 0
+	}
+
+	// Calculate end index
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+
+	// Determine if there are more items
+	hasMore := end < total
+	nextOffset := end
+
+	return sessions[offset:end], hasMore, nextOffset
 }
 
 func CreateSession(c *gin.Context) {

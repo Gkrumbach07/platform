@@ -41,8 +41,23 @@ export type UpdateProjectResponse = {
   project: Project;
 };
 
+/**
+ * Legacy response type (deprecated - use PaginatedResponse<Project>)
+ */
 export type ListProjectsResponse = {
   items: Project[];
+};
+
+/**
+ * Paginated projects response from the backend
+ */
+export type ListProjectsPaginatedResponse = {
+  items: Project[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset?: number;
 };
 
 export type GetProjectResponse = {

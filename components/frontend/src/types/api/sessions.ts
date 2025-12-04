@@ -133,8 +133,23 @@ export type GetAgenticSessionResponse = {
   session: AgenticSession;
 };
 
+/**
+ * Legacy response type (deprecated - use PaginatedResponse<AgenticSession>)
+ */
 export type ListAgenticSessionsResponse = {
   items: AgenticSession[];
+};
+
+/**
+ * Paginated sessions response from the backend
+ */
+export type ListAgenticSessionsPaginatedResponse = {
+  items: AgenticSession[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset?: number;
 };
 
 export type StopAgenticSessionRequest = {

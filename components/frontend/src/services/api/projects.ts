@@ -8,16 +8,36 @@ import type {
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
-  ListProjectsResponse,
+  ListProjectsPaginatedResponse,
   DeleteProjectResponse,
   PermissionAssignment,
+  PaginationParams,
 } from '@/types/api';
 
 /**
- * List all projects
+ * List projects with pagination support
+ */
+export async function listProjectsPaginated(
+  params: PaginationParams = {}
+): Promise<ListProjectsPaginatedResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.limit) searchParams.set('limit', params.limit.toString());
+  if (params.offset) searchParams.set('offset', params.offset.toString());
+  if (params.search) searchParams.set('search', params.search);
+
+  const queryString = searchParams.toString();
+  const url = queryString ? `/projects?${queryString}` : '/projects';
+
+  return apiClient.get<ListProjectsPaginatedResponse>(url);
+}
+
+/**
+ * List all projects (legacy - fetches all without pagination)
+ * @deprecated Use listProjectsPaginated for better performance
  */
 export async function listProjects(): Promise<Project[]> {
-  const response = await apiClient.get<ListProjectsResponse>('/projects');
+  // For backward compatibility, fetch with a high limit
+  const response = await listProjectsPaginated({ limit: 100 });
   return response.items;
 }
 

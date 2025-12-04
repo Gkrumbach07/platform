@@ -185,7 +185,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 		}
 
 		// Set phase=Pending to trigger job creation (using StatusPatch)
-		// Clear any conditions from previous run that could interfere with phase derivation
+		// Set phase explicitly and clear completion time for restart
 		statusPatch.SetField("phase", "Pending")
 		statusPatch.SetField("startTime", time.Now().UTC().Format(time.RFC3339))
 		statusPatch.DeleteField("completionTime")
@@ -194,31 +194,6 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			Status:  "False",
 			Reason:  "Restarting",
 			Message: "Preparing to start session",
-		})
-		// Clear terminal state conditions from previous run
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionStopped,
-			Status:  "False",
-			Reason:  "Restarting",
-			Message: "Session restarting",
-		})
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionStopping,
-			Status:  "False",
-			Reason:  "Restarting",
-			Message: "Session restarting",
-		})
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionCompleted,
-			Status:  "False",
-			Reason:  "Restarting",
-			Message: "Session restarting",
-		})
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionFailed,
-			Status:  "False",
-			Reason:  "Restarting",
-			Message: "Session restarting",
 		})
 		// Apply immediately since we need to proceed with job creation
 		if err := statusPatch.ApplyAndReset(); err != nil {
@@ -248,21 +223,15 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			log.Printf("[DesiredPhase] Warning: failed to delete job: %v", err)
 		}
 
-		// Set phase=Stopping (transitional state) - this blocks any recreation attempts
+		// Set phase=Stopping explicitly (transitional state)
 		// The Stopping phase handler will verify cleanup and transition to Stopped
-		statusPatch.AddCondition(conditionUpdate{
-			Type:    conditionStopping,
-			Status:  "True",
-			Reason:  "UserRequested",
-			Message: "User requested stop, cleaning up resources",
-		})
+		statusPatch.SetField("phase", "Stopping")
 		statusPatch.AddCondition(conditionUpdate{
 			Type:    conditionReady,
 			Status:  "False",
 			Reason:  "Stopping",
 			Message: "Session is stopping",
 		})
-		// Apply immediately - this sets phase=Stopping via derivePhaseFromConditions
 		if err := statusPatch.Apply(); err != nil {
 			log.Printf("[DesiredPhase] Warning: failed to update status: %v", err)
 		}
@@ -282,22 +251,10 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			// Job is gone - safe to transition to Stopped
 			log.Printf("[Stopping] Session %s/%s: job deleted, transitioning to Stopped", sessionNamespace, name)
 
+			// Set phase=Stopped explicitly
 			statusPatch.SetField("phase", "Stopped")
 			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-			// Set conditionStopped=True so derivePhaseFromConditions returns "Stopped"
-			// This prevents PVCReady=True from causing phase to become "Pending"
-			statusPatch.AddCondition(conditionUpdate{
-				Type:    conditionStopped,
-				Status:  "True",
-				Reason:  "UserStopped",
-				Message: "Session stopped by user request",
-			})
-			statusPatch.AddCondition(conditionUpdate{
-				Type:    conditionStopping,
-				Status:  "False",
-				Reason:  "Stopped",
-				Message: "Session stopped successfully",
-			})
+			// Update progress-tracking conditions to reflect stopped state
 			statusPatch.AddCondition(conditionUpdate{
 				Type:    conditionJobCreated,
 				Status:  "False",
@@ -550,6 +507,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			if desiredPhase == "Stopped" {
 				// Job already gone, can transition directly to Stopped (skip Stopping phase)
 				log.Printf("Session %s in Creating phase but job not found and stop requested, transitioning to Stopped", name)
+				// Set phase=Stopped explicitly
 				statusPatch.SetField("phase", "Stopped")
 				statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
 				statusPatch.AddCondition(conditionUpdate{
@@ -558,13 +516,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					Reason:  "UserStopped",
 					Message: "User requested stop during job creation",
 				})
-				// Set conditionStopped=True so derivePhaseFromConditions returns "Stopped"
-				statusPatch.AddCondition(conditionUpdate{
-					Type:    conditionStopped,
-					Status:  "True",
-					Reason:  "UserStopped",
-					Message: "Session stopped by user request",
-				})
+				// Update progress-tracking conditions
 				statusPatch.AddCondition(conditionUpdate{
 					Type:    conditionJobCreated,
 					Status:  "False",
@@ -576,12 +528,6 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					Status:  "False",
 					Reason:  "UserStopped",
 					Message: "Runner stopped by user",
-				})
-				statusPatch.AddCondition(conditionUpdate{
-					Type:    conditionStopping,
-					Status:  "False",
-					Reason:  "Stopped",
-					Message: "Session stopped successfully",
 				})
 				_ = statusPatch.Apply()
 				_ = clearAnnotation(sessionNamespace, name, "ambient-code.io/desired-phase")
@@ -760,6 +706,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			log.Printf("Successfully copied %s secret to %s", types.AmbientVertexSecretName, sessionNamespace)
 		} else if !errors.IsNotFound(err) {
 			errMsg := fmt.Sprintf("Failed to check for %s secret: %v", types.AmbientVertexSecretName, err)
+			statusPatch.SetField("phase", "Failed")
 			statusPatch.AddCondition(conditionUpdate{
 				Type:    conditionSecretsReady,
 				Status:  "False",
@@ -767,8 +714,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 				Message: errMsg,
 			})
 			statusPatch.AddCondition(conditionUpdate{
-				Type:    conditionFailed,
-				Status:  "True",
+				Type:    conditionReady,
+				Status:  "False",
 				Reason:  "VertexSecretError",
 				Message: errMsg,
 			})
@@ -778,6 +725,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			// Vertex enabled but secret not found - fail fast
 			errMsg := fmt.Sprintf("CLAUDE_CODE_USE_VERTEX=1 but %s secret not found in namespace %s. Create it with: kubectl create secret generic %s --from-file=ambient-code-key.json=/path/to/sa.json -n %s",
 				types.AmbientVertexSecretName, operatorNamespace, types.AmbientVertexSecretName, operatorNamespace)
+			statusPatch.SetField("phase", "Failed")
 			statusPatch.AddCondition(conditionUpdate{
 				Type:    conditionSecretsReady,
 				Status:  "False",
@@ -785,8 +733,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 				Message: errMsg,
 			})
 			statusPatch.AddCondition(conditionUpdate{
-				Type:    conditionFailed,
-				Status:  "True",
+				Type:    conditionReady,
+				Status:  "False",
 				Reason:  "VertexSecretMissing",
 				Message: "Vertex AI enabled but ambient-vertex secret not found",
 			})
@@ -831,6 +779,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	_, err = config.K8sClient.BatchV1().Jobs(sessionNamespace).Get(context.TODO(), jobName, v1.GetOptions{})
 	if err == nil {
 		log.Printf("Job %s already exists for AgenticSession %s", jobName, name)
+		statusPatch.SetField("phase", "Creating")
 		statusPatch.SetField("observedGeneration", currentObj.GetGeneration())
 		statusPatch.AddCondition(conditionUpdate{
 			Type:    conditionJobCreated,
@@ -1378,6 +1327,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	}
 
 	log.Printf("Created job %s for AgenticSession %s", jobName, name)
+	statusPatch.SetField("phase", "Creating")
 	statusPatch.SetField("observedGeneration", currentObj.GetGeneration())
 	statusPatch.AddCondition(conditionUpdate{
 		Type:    conditionJobCreated,
@@ -1732,8 +1682,8 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 		}
 
 		if job.Status.Succeeded > 0 {
+			statusPatch.SetField("phase", "Completed")
 			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-			statusPatch.AddCondition(conditionUpdate{Type: conditionCompleted, Status: "True", Reason: "JobSucceeded", Message: "Runner completed successfully"})
 			statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "Completed", Message: "Session finished"})
 			_ = statusPatch.Apply()
 			_ = ensureSessionIsInteractive(sessionNamespace, sessionName)
@@ -1742,9 +1692,9 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 		}
 
 		if job.Spec.BackoffLimit != nil && job.Status.Failed >= *job.Spec.BackoffLimit {
+			statusPatch.SetField("phase", "Failed")
 			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-			statusPatch.AddCondition(conditionUpdate{Type: conditionFailed, Status: "True", Reason: "BackoffLimitExceeded", Message: "Runner failed repeatedly"})
-			statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "Error", Message: "Runner failed"})
+			statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "BackoffLimitExceeded", Message: "Runner failed repeatedly"})
 			_ = statusPatch.Apply()
 			_ = ensureSessionIsInteractive(sessionNamespace, sessionName)
 			_ = deleteJobAndPerJobService(sessionNamespace, jobName, sessionName)
@@ -1753,13 +1703,8 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 
 		if len(pods.Items) == 0 {
 			if job.Status.Active == 0 && job.Status.Succeeded == 0 && job.Status.Failed == 0 {
+				statusPatch.SetField("phase", "Failed")
 				statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-				statusPatch.AddCondition(conditionUpdate{
-					Type:    conditionFailed,
-					Status:  "True",
-					Reason:  "PodMissing",
-					Message: "Job pod disappeared unexpectedly",
-				})
 				statusPatch.AddCondition(conditionUpdate{
 					Type:    conditionReady,
 					Status:  "False",
@@ -1783,8 +1728,8 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 		}
 
 		if pod.Status.Phase == corev1.PodFailed {
+			statusPatch.SetField("phase", "Failed")
 			statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-			statusPatch.AddCondition(conditionUpdate{Type: conditionFailed, Status: "True", Reason: pod.Status.Reason, Message: pod.Status.Message})
 			statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "PodFailed", Message: pod.Status.Message})
 			_ = statusPatch.Apply()
 			_ = ensureSessionIsInteractive(sessionNamespace, sessionName)
@@ -1800,6 +1745,7 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 		}
 
 		if runner.State.Running != nil {
+			statusPatch.SetField("phase", "Running")
 			statusPatch.AddCondition(conditionUpdate{Type: conditionRunnerStarted, Status: "True", Reason: "ContainerRunning", Message: "Runner container is executing"})
 			statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "True", Reason: "Running", Message: "Session is running"})
 			_ = statusPatch.Apply()
@@ -1811,8 +1757,8 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 			errorStates := map[string]bool{"ImagePullBackOff": true, "ErrImagePull": true, "CrashLoopBackOff": true, "CreateContainerConfigError": true, "InvalidImageName": true}
 			if errorStates[waiting.Reason] {
 				msg := fmt.Sprintf("Runner waiting: %s - %s", waiting.Reason, waiting.Message)
+				statusPatch.SetField("phase", "Failed")
 				statusPatch.SetField("completionTime", time.Now().UTC().Format(time.RFC3339))
-				statusPatch.AddCondition(conditionUpdate{Type: conditionFailed, Status: "True", Reason: waiting.Reason, Message: waiting.Message})
 				statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: waiting.Reason, Message: msg})
 				_ = statusPatch.Apply()
 				_ = ensureSessionIsInteractive(sessionNamespace, sessionName)
@@ -1828,16 +1774,11 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 			statusPatch.SetField("completionTime", now)
 			switch term.ExitCode {
 			case 0:
-				statusPatch.AddCondition(conditionUpdate{Type: conditionCompleted, Status: "True", Reason: "ExitCode0", Message: "Runner exited successfully"})
+				statusPatch.SetField("phase", "Completed")
 				statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "Completed", Message: "Runner finished"})
 			case 2:
 				msg := fmt.Sprintf("Runner exited due to prerequisite failure: %s", term.Message)
-				statusPatch.AddCondition(conditionUpdate{
-					Type:    conditionFailed,
-					Status:  "True",
-					Reason:  "PrerequisiteFailed",
-					Message: msg,
-				})
+				statusPatch.SetField("phase", "Failed")
 				statusPatch.AddCondition(conditionUpdate{
 					Type:    conditionReady,
 					Status:  "False",
@@ -1849,7 +1790,7 @@ func monitorJob(jobName, sessionName, sessionNamespace string) {
 				if term.Message != "" {
 					msg = fmt.Sprintf("%s - %s", msg, term.Message)
 				}
-				statusPatch.AddCondition(conditionUpdate{Type: conditionFailed, Status: "True", Reason: "RunnerExit", Message: msg})
+				statusPatch.SetField("phase", "Failed")
 				statusPatch.AddCondition(conditionUpdate{Type: conditionReady, Status: "False", Reason: "RunnerExit", Message: msg})
 			}
 

@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	// Progress tracking conditions - these track the session's lifecycle stages
 	conditionReady                     = "Ready"
 	conditionPVCReady                  = "PVCReady"
 	conditionSecretsReady              = "SecretsReady"
@@ -26,10 +27,7 @@ const (
 	conditionReposReconciled           = "ReposReconciled"
 	conditionWorkflowReconciled        = "WorkflowReconciled"
 	conditionTempContentPodReady       = "TempContentPodReady"
-	conditionCompleted                 = "Completed"
-	conditionFailed                    = "Failed"
-	conditionStopping                  = "Stopping"
-	conditionStopped                   = "Stopped"
+	conditionReconciled                = "Reconciled"
 	runnerTokenSecretAnnotation        = "ambient-code.io/runner-token-secret"
 	runnerServiceAccountAnnotation     = "ambient-code.io/runner-sa"
 	runnerTokenRefreshedAtAnnotation   = "ambient-code.io/token-refreshed-at"
@@ -153,10 +151,7 @@ func mutateAgenticSessionStatus(sessionNamespace, name string, mutator func(stat
 
 	mutator(status)
 
-	// Always derive phase from conditions if they exist
-	if derived := derivePhaseFromConditions(status); derived != "" {
-		status["phase"] = derived
-	}
+	// Phase is set explicitly by callers - no derivation needed
 
 	_, err = config.DynamicClient.Resource(gvr).Namespace(sessionNamespace).UpdateStatus(context.TODO(), obj, v1.UpdateOptions{})
 	if err != nil {
@@ -301,42 +296,6 @@ func setCondition(status map[string]interface{}, update conditionUpdate) {
 	}
 
 	status["conditions"] = conditions
-}
-
-// derivePhaseFromConditions determines the high-level phase from condition set.
-func derivePhaseFromConditions(status map[string]interface{}) string {
-	condStatus := func(condType string) string {
-		conditions, _ := status["conditions"].([]interface{})
-		for _, c := range conditions {
-			if existing, ok := c.(map[string]interface{}); ok {
-				if strings.EqualFold(existing["type"].(string), condType) {
-					if val, ok := existing["status"].(string); ok {
-						return val
-					}
-				}
-			}
-		}
-		return ""
-	}
-
-	switch {
-	case condStatus(conditionFailed) == "True":
-		return "Failed"
-	case condStatus(conditionCompleted) == "True":
-		return "Completed"
-	case condStatus(conditionStopped) == "True":
-		return "Stopped"
-	case condStatus(conditionStopping) == "True":
-		return "Stopping"
-	case condStatus(conditionRunnerStarted) == "True":
-		return "Running"
-	case condStatus(conditionJobCreated) == "True":
-		return "Creating"
-	case condStatus(conditionPVCReady) == "True":
-		return "Pending"
-	default:
-		return ""
-	}
 }
 
 // ensureFreshRunnerToken refreshes the runner SA token if it is older than the allowed TTL.

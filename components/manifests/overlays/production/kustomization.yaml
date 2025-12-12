@@ -37,23 +37,23 @@ images:
   newName: quay.io/ambient_code/vteam_backend
   newTag: latest
 - name: quay.io/ambient_code/vteam_backend:latest
-  newName: quay.io/ambient_code/vteam_backend
+  newName: quay.io/gkrumbach07/vteam_backend
   newTag: latest
 - name: quay.io/ambient_code/vteam_claude_runner
   newName: quay.io/ambient_code/vteam_claude_runner
   newTag: latest
 - name: quay.io/ambient_code/vteam_claude_runner:latest
-  newName: quay.io/ambient_code/vteam_claude_runner
+  newName: quay.io/gkrumbach07/vteam_claude_runner
   newTag: latest
 - name: quay.io/ambient_code/vteam_frontend
   newName: quay.io/ambient_code/vteam_frontend
   newTag: latest
 - name: quay.io/ambient_code/vteam_frontend:latest
-  newName: quay.io/ambient_code/vteam_frontend
+  newName: quay.io/gkrumbach07/vteam_frontend
   newTag: latest
 - name: quay.io/ambient_code/vteam_operator
   newName: quay.io/ambient_code/vteam_operator
   newTag: latest
 - name: quay.io/ambient_code/vteam_operator:latest
-  newName: quay.io/ambient_code/vteam_operator
+  newName: quay.io/gkrumbach07/vteam_operator
   newTag: latest

@@ -13,8 +13,8 @@ import (
 // MigrateLegacySessionToAGUI converts old message format to AG-UI events
 // Creates a MESSAGES_SNAPSHOT from legacy messages and persists it
 func MigrateLegacySessionToAGUI(sessionID string) error {
-	// Check if session has legacy messages
-	legacyPath := StateBaseDir + "/sessions/" + sessionID + "/messages.json"
+	// Check if session has legacy messages (JSONL format)
+	legacyPath := StateBaseDir + "/sessions/" + sessionID + "/messages.jsonl"
 	data, err := os.ReadFile(legacyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -24,25 +24,28 @@ func MigrateLegacySessionToAGUI(sessionID string) error {
 		return err
 	}
 
-	log.Printf("LegacyMigration: Found legacy messages.json for %s, converting to AG-UI", sessionID)
+	log.Printf("LegacyMigration: Found legacy messages.jsonl for %s, converting to AG-UI", sessionID)
 
-	var legacyData struct {
-		Messages  []map[string]interface{} `json:"messages"`
-		SessionID string                   `json:"sessionId"`
-	}
-
-	if err := json.Unmarshal(data, &legacyData); err != nil {
-		log.Printf("LegacyMigration: Failed to parse legacy messages: %v", err)
-		return err
+	// Parse JSONL - each line is a complete message
+	var legacyMessages []map[string]interface{}
+	lines := splitLines(data)
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		var msg map[string]interface{}
+		if err := json.Unmarshal(line, &msg); err == nil {
+			legacyMessages = append(legacyMessages, msg)
+		}
 	}
 
 	// Convert to AG-UI Message format
 	messages := make([]types.Message, 0)
-	
-	for _, legacyMsg := range legacyData.Messages {
+
+	for _, legacyMsg := range legacyMessages {
 		msgType, _ := legacyMsg["type"].(string)
 		payload, _ := legacyMsg["payload"].(map[string]interface{})
-		
+
 		switch msgType {
 		case "user_message":
 			content, _ := payload["content"].(string)
@@ -66,8 +69,8 @@ func MigrateLegacySessionToAGUI(sessionID string) error {
 				}
 			}
 			// Tool calls will be reconstructed from tool_result pairs
-			
-		// system.message, agent.running, agent.waiting are not chat messages, skip
+
+			// system.message, agent.running, agent.waiting are not chat messages, skip
 		}
 	}
 
@@ -96,6 +99,8 @@ func MigrateLegacySessionToAGUI(sessionID string) error {
 	migratedPath := legacyPath + ".migrated"
 	if err := os.Rename(legacyPath, migratedPath); err != nil {
 		log.Printf("LegacyMigration: Warning - failed to rename legacy file: %v", err)
+	} else {
+		log.Printf("LegacyMigration: Renamed %s to %s", legacyPath, migratedPath)
 	}
 
 	return nil
@@ -107,4 +112,3 @@ func generateEventID() string {
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
-

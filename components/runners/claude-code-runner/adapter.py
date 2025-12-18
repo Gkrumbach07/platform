@@ -107,7 +107,7 @@ class ClaudeCodeAdapter:
         """Return current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
 
-    async def process_run(self, input_data: RunAgentInput, app_state: Optional[Any] = None) -> AsyncIterator[BaseEvent]:
+    async def process_run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """
         Process a run and yield AG-UI events.
         
@@ -214,7 +214,7 @@ class ClaudeCodeAdapter:
             
             # Run Claude SDK and yield events
             logger.info(f"Starting Claude SDK with prompt: '{user_message[:50]}...'")
-            async for event in self._run_claude_agent_sdk(user_message, thread_id, run_id, app_state=app_state):
+            async for event in self._run_claude_agent_sdk(user_message, thread_id, run_id):
                 yield event
             logger.info(f"Claude SDK processing completed for run {run_id}")
             
@@ -280,23 +280,18 @@ class ClaudeCodeAdapter:
         return ""
 
     async def _run_claude_agent_sdk(
-        self, prompt: str, thread_id: str, run_id: str, app_state: Optional[Any] = None
+        self, prompt: str, thread_id: str, run_id: str
     ) -> AsyncIterator[BaseEvent]:
         """Execute the Claude Code SDK with the given prompt and yield AG-UI events.
+        
+        Creates a fresh client for each run - simpler and more reliable than client reuse.
         
         Args:
             prompt: The user prompt to send to Claude
             thread_id: AG-UI thread identifier
             run_id: AG-UI run identifier
-            app_state: Optional FastAPI app.state for persistent client storage/reuse
         """
-        # Check if we have a persistent client in app_state
-        has_persistent_client = (
-            app_state is not None and 
-            hasattr(app_state, 'claude_client') and 
-            app_state.claude_client is not None
-        )
-        logger.info(f"_run_claude_agent_sdk called with prompt length={len(prompt)}, has_persistent_client={has_persistent_client}")
+        logger.info(f"_run_claude_agent_sdk called with prompt length={len(prompt)}, will create fresh client")
         try:
             # Check for authentication method
             logger.info("Checking authentication configuration...")
@@ -484,85 +479,29 @@ class ClaudeCodeAdapter:
                     opts.continue_conversation = False
                 return ClaudeSDKClient(options=opts)
 
-            # Check if we can reuse persistent client from app_state
-            client_is_alive = False
-            if has_persistent_client:
-                # Check if the underlying subprocess is still alive
-                client = app_state.claude_client
-                try:
-                    # The SDK client has an internal transport with a subprocess
-                    transport = getattr(client, '_transport', None)
-                    if transport:
-                        proc = getattr(transport, '_process', None) or getattr(transport, 'process', None)
-                        if proc and hasattr(proc, 'returncode'):
-                            client_is_alive = proc.returncode is None
-                            if not client_is_alive:
-                                logger.warning(f"Persistent client subprocess exited (code={proc.returncode}), will create new one")
-                        else:
-                            # Can't check, assume alive
-                            client_is_alive = True
-                    else:
-                        # No transport, assume alive
-                        client_is_alive = True
-                except Exception as e:
-                    logger.warning(f"Could not check client subprocess status: {e}")
-                    client_is_alive = False
-
-            if has_persistent_client and client_is_alive:
-                # Reusing persistent client from app.state
-                logger.info("♻️ Reusing persistent Claude SDK client (conversation continuity)")
-                client = app_state.claude_client
-                client_ctx = None  # Not managing lifecycle - client is persistent
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=thread_id,
-                    run_id=run_id,
-                    event={"type": "system_log", "message": "♻️ Reusing persistent client (instant startup!)"}
-                )
-            else:
-                # Clear stale persistent client if subprocess died
-                if has_persistent_client and not client_is_alive:
-                    logger.info("Clearing stale persistent client")
-                    # Try to disconnect cleanly
-                    try:
-                        if app_state.claude_client:
-                            await app_state.claude_client.disconnect()
-                    except Exception as e:
-                        logger.warning(f"Error disconnecting stale client: {e}")
-                    app_state.claude_client = None
-                    app_state.claude_client_ctx = None
-                
-                # Create new client with full options using explicit connect() pattern
-                # (matches SDK docs example for continuous conversation)
-                logger.info("Creating new ClaudeSDKClient with full options...")
-
-                try:
-                    logger.info("Creating ClaudeSDKClient...")
-                    client = create_sdk_client(options)
-                    logger.info("Connecting ClaudeSDKClient (initializing subprocess)...")
+            # Always create a fresh client for each run (simple and reliable)
+            logger.info("Creating new ClaudeSDKClient for this run...")
+            
+            try:
+                logger.info("Creating ClaudeSDKClient...")
+                client = create_sdk_client(options)
+                logger.info("Connecting ClaudeSDKClient (initializing subprocess)...")
+                await client.connect()
+                logger.info("ClaudeSDKClient connected successfully!")
+            except Exception as resume_error:
+                error_str = str(resume_error).lower()
+                if "no conversation found" in error_str or "session" in error_str:
+                    logger.warning(f"Conversation continuation failed: {resume_error}")
+                    yield RawEvent(
+                        type=EventType.RAW,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        event={"type": "system_log", "message": "⚠️ Could not continue conversation, starting fresh..."}
+                    )
+                    client = create_sdk_client(options, disable_continue=True)
                     await client.connect()
-                    logger.info("ClaudeSDKClient connected successfully!")
-                    client_ctx = None  # Using explicit connect/disconnect, not context manager
-                except Exception as resume_error:
-                    error_str = str(resume_error).lower()
-                    if "no conversation found" in error_str or "session" in error_str:
-                        logger.warning(f"Conversation continuation failed: {resume_error}")
-                        yield RawEvent(
-                            type=EventType.RAW,
-                            thread_id=thread_id,
-                            run_id=run_id,
-                            event={"type": "system_log", "message": "⚠️ Could not continue conversation, starting fresh..."}
-                        )
-                        client = create_sdk_client(options, disable_continue=True)
-                        await client.connect()
-                    else:
-                        raise
-                
-                # Store in app_state for reuse in subsequent requests
-                if app_state is not None:
-                    logger.info("✅ Storing persistent client in app_state for future requests")
-                    app_state.claude_client = client
-                    app_state.claude_client_ctx = None  # Using explicit connect/disconnect
+                else:
+                    raise
 
             try:
                 # Store client reference for interrupt support
@@ -791,12 +730,10 @@ class ClaudeCodeAdapter:
                 # Clear active client reference (interrupt no longer valid for this run)
                 self._active_client = None
                 
-                # Only destroy client if we created it (not reusing persistent one)
-                if client_ctx is not None:
-                    logger.info("Cleaning up newly created client for this request")
-                    await client_ctx.__aexit__(None, None, None)
-                else:
-                    logger.info("Keeping persistent client alive for next request")
+                # Always disconnect client at end of run (no persistence)
+                if client is not None:
+                    logger.info("Disconnecting client (end of run)")
+                    await client.disconnect()
             
             # Finalize observability
             await obs.finalize()

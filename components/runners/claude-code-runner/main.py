@@ -96,14 +96,7 @@ async def lifespan(app: FastAPI):
     adapter = ClaudeCodeAdapter()
     adapter.context = context
     
-    # Don't create persistent client here - adapter will create it on first request
-    # with proper options (MCP servers, system prompt, model, etc.)
-    # The client will then be stored in app.state for reuse
-    app.state.claude_client = None
-    app.state.claude_client_ctx = None
-    app.state.claude_lock = asyncio.Lock()  # Serialize access to client
-    
-    logger.info("Client will be created on first request with full options")
+    logger.info("Adapter initialized - fresh client will be created for each run")
     
     # Check if this is a restart (conversation history exists)
     history_marker = Path(workspace_path) / ".claude" / "state"
@@ -120,15 +113,8 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Cleanup - disconnect the client if one was created
+    # Cleanup
     logger.info("Shutting down AG-UI server...")
-    if app.state.claude_client is not None:
-        logger.info("Disconnecting persistent Claude SDK client...")
-        try:
-            await app.state.claude_client.disconnect()
-        except Exception as e:
-            logger.warning(f"Error disconnecting client: {e}")
-        logger.info("Claude SDK client disconnected")
 
 
 async def auto_execute_initial_prompt(prompt: str, session_id: str):
@@ -192,24 +178,6 @@ async def auto_execute_initial_prompt(prompt: str, session_id: str):
         logger.warning(f"INITIAL_PROMPT auto-execution error (backend will retry): {e}")
 
 
-async def invalidate_persistent_client(app):
-    """Destroy persistent client so new one is created with new options.
-    
-    Call this when workflow or repos change and client needs new configuration.
-    """
-    async with app.state.claude_lock:
-        if app.state.claude_client is not None:
-            logger.info("🔄 Invalidating persistent client (workflow/repo change)...")
-            try:
-                await app.state.claude_client.disconnect()
-            except Exception as e:
-                logger.warning(f"Error disconnecting old client: {e}")
-            app.state.claude_client = None
-            app.state.claude_client_ctx = None
-            logger.info("✅ Persistent client invalidated - will recreate on next request")
-        else:
-            logger.info("No persistent client to invalidate")
-
 
 app = FastAPI(
     title="Claude Code AG-UI Server",
@@ -263,15 +231,10 @@ async def run_agent(input_data: RunnerInput, request: Request):
             
             logger.info("Starting adapter.process_run()...")
             
-            # Use lock to serialize access to the persistent client
-            async with request.app.state.claude_lock:
-                # Pass app.state so adapter can create/reuse persistent client
-                async for event in adapter.process_run(
-                    run_agent_input, 
-                    app_state=request.app.state
-                ):
-                    logger.debug(f"Yielding run event: {event.type}")
-                    yield encoder.encode(event)
+            # Process the run (creates fresh client each time)
+            async for event in adapter.process_run(run_agent_input):
+                logger.debug(f"Yielding run event: {event.type}")
+                yield encoder.encode(event)
             logger.info("adapter.process_run() completed")
         except Exception as e:
             logger.error(f"Error in event generator: {e}")
@@ -346,10 +309,7 @@ async def change_workflow(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    # Destroy persistent client so new one is created with new options
-    await invalidate_persistent_client(request.app)
-    
-    logger.info("Workflow updated, persistent client invalidated - will recreate on next run")
+    logger.info("Workflow updated, adapter will reinitialize on next run")
     
     # Trigger a new run to greet user with workflow context
     # This runs in background via backend POST
@@ -457,10 +417,7 @@ async def add_repo(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    # Destroy persistent client so new one is created with new repo config
-    await invalidate_persistent_client(request.app)
-    
-    logger.info(f"Repo added, persistent client invalidated - will recreate on next run")
+    logger.info(f"Repo added, adapter will reinitialize on next run")
     
     return {"message": "Repository added"}
 
@@ -497,10 +454,7 @@ async def remove_repo(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    # Destroy persistent client so new one is created with new repo config
-    await invalidate_persistent_client(request.app)
-    
-    logger.info(f"Repo removed, persistent client invalidated - will recreate on next run")
+    logger.info(f"Repo removed, adapter will reinitialize on next run")
     
     return {"message": "Repository removed"}
 

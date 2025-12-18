@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Download, Loader2 } from 'lucide-react';
 import type { AgenticSession } from '@/types/agentic-session';
 import { getPhaseColor } from '@/utils/session-helpers';
-import { successToast, errorToast } from '@/hooks/use-toast';
+import { successToast } from '@/hooks/use-toast';
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -57,13 +57,17 @@ export function SessionDetailsModal({
   k8sResources,
   messageCount,
 }: SessionDetailsModalProps) {
-  const [exporting, setExporting] = useState(false);
+  const [exportData, setExportData] = useState<ExportResponse | null>(null);
+  const [loadingExport, setLoadingExport] = useState(false);
+  const [exportingAgui, setExportingAgui] = useState(false);
+  const [exportingLegacy, setExportingLegacy] = useState(false);
   const sessionName = session.metadata?.name || '';
 
-  const handleExport = async () => {
-    if (!sessionName || !projectName) return;
+  // Fetch export data when modal opens to determine what's available
+  const fetchExportData = async () => {
+    if (!sessionName || !projectName || exportData) return;
     
-    setExporting(true);
+    setLoadingExport(true);
     try {
       const response = await fetch(
         `/api/projects/${encodeURIComponent(projectName)}/agentic-sessions/${encodeURIComponent(sessionName)}/export`
@@ -71,38 +75,57 @@ export function SessionDetailsModal({
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to export session');
+        throw new Error(errorData.error || 'Failed to load export data');
       }
       
       const data: ExportResponse = await response.json();
-      
-      // Download AG-UI events
-      const aguiBlob = new Blob([JSON.stringify(data.aguiEvents, null, 2)], { type: 'application/json' });
-      const aguiUrl = URL.createObjectURL(aguiBlob);
-      const aguiLink = document.createElement('a');
-      aguiLink.href = aguiUrl;
-      aguiLink.download = `${sessionName}-agui-events.json`;
-      aguiLink.click();
-      URL.revokeObjectURL(aguiUrl);
-      
-      // Download legacy messages if available
-      if (data.hasLegacy && data.legacyMessages) {
-        const legacyBlob = new Blob([JSON.stringify(data.legacyMessages, null, 2)], { type: 'application/json' });
-        const legacyUrl = URL.createObjectURL(legacyBlob);
-        const legacyLink = document.createElement('a');
-        legacyLink.href = legacyUrl;
-        legacyLink.download = `${sessionName}-legacy-messages.json`;
-        legacyLink.click();
-        URL.revokeObjectURL(legacyUrl);
-        successToast('Chat exported (2 files: AG-UI events + legacy messages)');
-      } else {
-        successToast('Chat exported successfully');
-      }
+      setExportData(data);
     } catch (error) {
-      console.error('Export failed:', error);
-      errorToast(error instanceof Error ? error.message : 'Failed to export chat');
+      console.error('Failed to load export data:', error);
     } finally {
-      setExporting(false);
+      setLoadingExport(false);
+    }
+  };
+
+  // Fetch export data when modal opens
+  if (open && !exportData && !loadingExport) {
+    fetchExportData();
+  }
+
+  // Reset export data when modal closes
+  if (!open && exportData) {
+    setExportData(null);
+  }
+
+  const downloadFile = (data: unknown, filename: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportAgui = async () => {
+    if (!exportData) return;
+    setExportingAgui(true);
+    try {
+      downloadFile(exportData.aguiEvents, `${sessionName}-chat.json`);
+      successToast('Chat exported successfully');
+    } finally {
+      setExportingAgui(false);
+    }
+  };
+
+  const handleExportLegacy = async () => {
+    if (!exportData?.legacyMessages) return;
+    setExportingLegacy(true);
+    try {
+      downloadFile(exportData.legacyMessages, `${sessionName}-legacy-messages.json`);
+      successToast('Legacy messages exported successfully');
+    } finally {
+      setExportingLegacy(false);
     }
   };
 
@@ -165,22 +188,48 @@ export function SessionDetailsModal({
               <span className="text-foreground">{messageCount}</span>
             </div>
             
-            {/* Export button */}
-            <div className="pt-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleExport}
-                disabled={exporting}
-                className="w-full"
-              >
-                {exporting ? (
+            {/* Export buttons */}
+            <div className="pt-2 space-y-2">
+              {loadingExport ? (
+                <Button variant="outline" size="sm" disabled className="w-full">
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4 mr-2" />
-                )}
-                {exporting ? 'Exporting...' : 'Export Chat'}
-              </Button>
+                  Loading...
+                </Button>
+              ) : (
+                <>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleExportAgui}
+                    disabled={exportingAgui || !exportData}
+                    className="w-full"
+                  >
+                    {exportingAgui ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4 mr-2" />
+                    )}
+                    {exportingAgui ? 'Exporting...' : 'Export Chat'}
+                  </Button>
+                  
+                  {exportData?.hasLegacy && (
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleExportLegacy}
+                      disabled={exportingLegacy}
+                      className="w-full"
+                    >
+                      {exportingLegacy ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4 mr-2" />
+                      )}
+                      {exportingLegacy ? 'Exporting...' : 'Export Legacy Messages'}
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
           </div>
           

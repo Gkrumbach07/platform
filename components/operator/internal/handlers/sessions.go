@@ -2426,53 +2426,6 @@ func reconcileTempContentPodWithPatch(sessionNamespace, sessionName, tempPodName
 // LEGACY: getBackendAPIURL removed - AG-UI migration
 // Workflow and repo changes now call runner's REST endpoints directly
 
-// sendWebSocketMessageViaBackend sends a WebSocket message to the runner via the backend's message endpoint
-func sendWebSocketMessageViaBackend(namespace, sessionName, backendURL string, message map[string]interface{}) error {
-	// The backend exposes POST /api/projects/:project/sessions/:sessionName/messages
-	// Format: { "type": "repo_added", "payload": {...}, ...other fields }
-	// Backend will extract "type" and wrap remaining fields under "payload" if needed
-	url := fmt.Sprintf("%s/projects/%s/sessions/%s/messages", backendURL, namespace, sessionName)
-
-	payload, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// Use operator's service account token for authentication
-	// The backend accepts internal calls from the operator namespace
-	// Get the operator's SA token from the mounted service account
-	tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
-	if err == nil && len(tokenBytes) > 0 {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(tokenBytes)))
-	} else {
-		log.Printf("[WebSocket] Warning: could not read operator SA token, request may fail: %v", err)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("backend returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	log.Printf("[WebSocket] Successfully sent message type=%s to session %s/%s via backend", message["type"], namespace, sessionName)
-	return nil
-}
-
 // deriveRepoNameFromURL extracts the repository name from a git URL
 func deriveRepoNameFromURL(repoURL string) string {
 	// Remove .git suffix

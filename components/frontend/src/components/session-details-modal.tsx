@@ -1,9 +1,13 @@
 "use client";
 
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Download, Loader2 } from 'lucide-react';
 import type { AgenticSession } from '@/types/agentic-session';
 import { getPhaseColor } from '@/utils/session-helpers';
+import { successToast, errorToast } from '@/hooks/use-toast';
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -24,6 +28,7 @@ function formatDuration(ms: number): string {
 
 type SessionDetailsModalProps = {
   session: AgenticSession;
+  projectName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   durationMs?: number;
@@ -34,14 +39,73 @@ type SessionDetailsModalProps = {
   messageCount: number;
 };
 
+type ExportResponse = {
+  sessionId: string;
+  projectName: string;
+  exportDate: string;
+  aguiEvents: unknown[];
+  legacyMessages?: unknown[];
+  hasLegacy: boolean;
+};
+
 export function SessionDetailsModal({
   session,
+  projectName,
   open,
   onOpenChange,
   durationMs,
   k8sResources,
   messageCount,
 }: SessionDetailsModalProps) {
+  const [exporting, setExporting] = useState(false);
+  const sessionName = session.metadata?.name || '';
+
+  const handleExport = async () => {
+    if (!sessionName || !projectName) return;
+    
+    setExporting(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/agentic-sessions/${encodeURIComponent(sessionName)}/export`
+      );
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to export session');
+      }
+      
+      const data: ExportResponse = await response.json();
+      
+      // Download AG-UI events
+      const aguiBlob = new Blob([JSON.stringify(data.aguiEvents, null, 2)], { type: 'application/json' });
+      const aguiUrl = URL.createObjectURL(aguiBlob);
+      const aguiLink = document.createElement('a');
+      aguiLink.href = aguiUrl;
+      aguiLink.download = `${sessionName}-agui-events.json`;
+      aguiLink.click();
+      URL.revokeObjectURL(aguiUrl);
+      
+      // Download legacy messages if available
+      if (data.hasLegacy && data.legacyMessages) {
+        const legacyBlob = new Blob([JSON.stringify(data.legacyMessages, null, 2)], { type: 'application/json' });
+        const legacyUrl = URL.createObjectURL(legacyBlob);
+        const legacyLink = document.createElement('a');
+        legacyLink.href = legacyUrl;
+        legacyLink.download = `${sessionName}-legacy-messages.json`;
+        legacyLink.click();
+        URL.revokeObjectURL(legacyUrl);
+        successToast('Chat exported (2 files: AG-UI events + legacy messages)');
+      } else {
+        successToast('Chat exported successfully');
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+      errorToast(error instanceof Error ? error.message : 'Failed to export chat');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
@@ -99,6 +163,24 @@ export function SessionDetailsModal({
             <div className="flex items-start gap-3">
               <span className="font-semibold text-foreground/80 min-w-[100px]">Messages:</span>
               <span className="text-foreground">{messageCount}</span>
+            </div>
+            
+            {/* Export button */}
+            <div className="pt-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleExport}
+                disabled={exporting}
+                className="w-full"
+              >
+                {exporting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 mr-2" />
+                )}
+                {exporting ? 'Exporting...' : 'Export Chat'}
+              </Button>
             </div>
           </div>
           

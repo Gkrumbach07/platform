@@ -2,14 +2,21 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"ambient-code-backend/handlers"
+
 	"github.com/gin-gonic/gin"
+	authv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ExportResponse contains the exported session data
@@ -30,11 +37,57 @@ func HandleExportSession(c *gin.Context) {
 
 	log.Printf("Export: Exporting session %s/%s", projectName, sessionName)
 
-	// Build paths
-	sessionDir := fmt.Sprintf("%s/sessions/%s", StateBaseDir, sessionName)
-	aguiEventsPath := fmt.Sprintf("%s/agui-events.jsonl", sessionDir)
-	legacyMigratedPath := fmt.Sprintf("%s/messages.jsonl.migrated", sessionDir)
-	legacyOriginalPath := fmt.Sprintf("%s/messages.jsonl", sessionDir)
+	// SECURITY: Authenticate user and get user-scoped K8s client
+	reqK8s, _ := handlers.GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		c.Abort()
+		return
+	}
+
+	// SECURITY: Verify user has permission to read this session
+	ctx := context.Background()
+	ssar := &authv1.SelfSubjectAccessReview{
+		Spec: authv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authv1.ResourceAttributes{
+				Group:     "vteam.ambient-code",
+				Resource:  "agenticsessions",
+				Verb:      "get",
+				Namespace: projectName,
+				Name:      sessionName,
+			},
+		},
+	}
+	res, err := reqK8s.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, ssar, metav1.CreateOptions{})
+	if err != nil || !res.Status.Allowed {
+		log.Printf("Export: User not authorized to read session %s/%s", projectName, sessionName)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
+		c.Abort()
+		return
+	}
+
+	// SECURITY: Validate sessionName to prevent path traversal
+	if !isValidSessionName(sessionName) {
+		log.Printf("Export: Invalid session name detected: %s", sessionName)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session name"})
+		return
+	}
+
+	// Build paths safely using filepath.Join and validate they're within StateBaseDir
+	baseDir := filepath.Clean(StateBaseDir)
+	sessionDir := filepath.Join(baseDir, "sessions", sessionName)
+	sessionDir = filepath.Clean(sessionDir)
+
+	// SECURITY: Ensure path is within allowed directory (prevent path traversal)
+	if !strings.HasPrefix(sessionDir, baseDir) {
+		log.Printf("Export: Security - path traversal attempt detected: %s", sessionName)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session name"})
+		return
+	}
+
+	aguiEventsPath := filepath.Join(sessionDir, "agui-events.jsonl")
+	legacyMigratedPath := filepath.Join(sessionDir, "messages.jsonl.migrated")
+	legacyOriginalPath := filepath.Join(sessionDir, "messages.jsonl")
 
 	// Check if session directory exists
 	if _, err := os.Stat(sessionDir); os.IsNotExist(err) {
@@ -106,6 +159,44 @@ func HandleExportSession(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// isValidSessionName validates that the session name is a valid Kubernetes resource name
+// and doesn't contain path traversal characters
+func isValidSessionName(name string) bool {
+	// Must not be empty
+	if name == "" {
+		return false
+	}
+
+	// Must not contain path traversal characters
+	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return false
+	}
+
+	// Kubernetes DNS label format: lowercase alphanumeric, hyphens allowed (not at start/end)
+	// Max 63 characters
+	if len(name) > 63 {
+		return false
+	}
+
+	// Check each character
+	for i, ch := range name {
+		isLower := ch >= 'a' && ch <= 'z'
+		isDigit := ch >= '0' && ch <= '9'
+		isHyphen := ch == '-'
+
+		if !isLower && !isDigit && !isHyphen {
+			return false
+		}
+
+		// Hyphen not allowed at start or end
+		if isHyphen && (i == 0 || i == len(name)-1) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // readJSONLFile reads a JSONL file and returns parsed array of objects
 func readJSONLFile(path string) ([]map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
@@ -131,4 +222,3 @@ func readJSONLFile(path string) ([]map[string]interface{}, error) {
 
 	return events, nil
 }
-

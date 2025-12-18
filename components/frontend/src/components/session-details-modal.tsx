@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Download, Loader2 } from 'lucide-react';
 import type { AgenticSession } from '@/types/agentic-session';
 import { getPhaseColor } from '@/utils/session-helpers';
 import { successToast } from '@/hooks/use-toast';
+import { useSessionExport } from '@/services/queries/use-sessions';
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -39,15 +40,6 @@ type SessionDetailsModalProps = {
   messageCount: number;
 };
 
-type ExportResponse = {
-  sessionId: string;
-  projectName: string;
-  exportDate: string;
-  aguiEvents: unknown[];
-  legacyMessages?: unknown[];
-  hasLegacy: boolean;
-};
-
 export function SessionDetailsModal({
   session,
   projectName,
@@ -57,47 +49,18 @@ export function SessionDetailsModal({
   k8sResources,
   messageCount,
 }: SessionDetailsModalProps) {
-  const [exportData, setExportData] = useState<ExportResponse | null>(null);
-  const [loadingExport, setLoadingExport] = useState(false);
   const [exportingAgui, setExportingAgui] = useState(false);
   const [exportingLegacy, setExportingLegacy] = useState(false);
   const sessionName = session.metadata?.name || '';
 
-  // Fetch export data when modal opens to determine what's available
-  const fetchExportData = async () => {
-    if (!sessionName || !projectName || exportData) return;
-    
-    setLoadingExport(true);
-    try {
-      const response = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/agentic-sessions/${encodeURIComponent(sessionName)}/export`
-      );
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to load export data');
-      }
-      
-      const data: ExportResponse = await response.json();
-      setExportData(data);
-    } catch (error) {
-      console.error('Failed to load export data:', error);
-    } finally {
-      setLoadingExport(false);
-    }
-  };
+  // Use React Query hook - only fetches when modal is open
+  const { data: exportData, isLoading: loadingExport } = useSessionExport(
+    projectName,
+    sessionName,
+    open // Only fetch when modal is open
+  );
 
-  // Fetch export data when modal opens
-  if (open && !exportData && !loadingExport) {
-    fetchExportData();
-  }
-
-  // Reset export data when modal closes
-  if (!open && exportData) {
-    setExportData(null);
-  }
-
-  const downloadFile = (data: unknown, filename: string) => {
+  const downloadFile = useCallback((data: unknown, filename: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -105,9 +68,9 @@ export function SessionDetailsModal({
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, []);
 
-  const handleExportAgui = async () => {
+  const handleExportAgui = useCallback(() => {
     if (!exportData) return;
     setExportingAgui(true);
     try {
@@ -116,9 +79,9 @@ export function SessionDetailsModal({
     } finally {
       setExportingAgui(false);
     }
-  };
+  }, [exportData, sessionName, downloadFile]);
 
-  const handleExportLegacy = async () => {
+  const handleExportLegacy = useCallback(() => {
     if (!exportData?.legacyMessages) return;
     setExportingLegacy(true);
     try {
@@ -127,7 +90,7 @@ export function SessionDetailsModal({
     } finally {
       setExportingLegacy(false);
     }
-  };
+  }, [exportData, sessionName, downloadFile]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -273,4 +236,3 @@ export function SessionDetailsModal({
     </Dialog>
   );
 }
-

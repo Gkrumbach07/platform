@@ -75,6 +75,9 @@ class ClaudeCodeAdapter:
         self._current_tool_id: Optional[str] = None
         self._current_run_id: Optional[str] = None
         self._current_thread_id: Optional[str] = None
+        
+        # Active client reference for interrupt support
+        self._active_client: Optional[Any] = None
 
     async def initialize(self, context: RunnerContext):
         """Initialize the adapter with context."""
@@ -104,7 +107,7 @@ class ClaudeCodeAdapter:
         """Return current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
 
-    async def process_run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    async def process_run(self, input_data: RunAgentInput, app_state: Optional[Any] = None) -> AsyncIterator[BaseEvent]:
         """
         Process a run and yield AG-UI events.
         
@@ -112,6 +115,7 @@ class ClaudeCodeAdapter:
         
         Args:
             input_data: RunAgentInput with thread_id, run_id, messages, tools
+            app_state: Optional FastAPI app.state for persistent client storage/reuse
             
         Yields:
             AG-UI events (RunStartedEvent, TextMessageContentEvent, etc.)
@@ -121,6 +125,10 @@ class ClaudeCodeAdapter:
         
         self._current_thread_id = thread_id
         self._current_run_id = run_id
+        
+        # Check for newly available Google OAuth credentials (user may have authenticated mid-session)
+        # This picks up credentials after K8s syncs the mounted secret (~60s after OAuth completes)
+        await self.refresh_google_credentials()
         
         try:
             # Emit RUN_STARTED
@@ -206,7 +214,7 @@ class ClaudeCodeAdapter:
             
             # Run Claude SDK and yield events
             logger.info(f"Starting Claude SDK with prompt: '{user_message[:50]}...'")
-            async for event in self._run_claude_agent_sdk(user_message, thread_id, run_id):
+            async for event in self._run_claude_agent_sdk(user_message, thread_id, run_id, app_state=app_state):
                 yield event
             logger.info(f"Claude SDK processing completed for run {run_id}")
             
@@ -272,10 +280,23 @@ class ClaudeCodeAdapter:
         return ""
 
     async def _run_claude_agent_sdk(
-        self, prompt: str, thread_id: str, run_id: str
+        self, prompt: str, thread_id: str, run_id: str, app_state: Optional[Any] = None
     ) -> AsyncIterator[BaseEvent]:
-        """Execute the Claude Code SDK with the given prompt and yield AG-UI events."""
-        logger.info(f"_run_claude_agent_sdk called with prompt length={len(prompt)}")
+        """Execute the Claude Code SDK with the given prompt and yield AG-UI events.
+        
+        Args:
+            prompt: The user prompt to send to Claude
+            thread_id: AG-UI thread identifier
+            run_id: AG-UI run identifier
+            app_state: Optional FastAPI app.state for persistent client storage/reuse
+        """
+        # Check if we have a persistent client in app_state
+        has_persistent_client = (
+            app_state is not None and 
+            hasattr(app_state, 'claude_client') and 
+            app_state.claude_client is not None
+        )
+        logger.info(f"_run_claude_agent_sdk called with prompt length={len(prompt)}, has_persistent_client={has_persistent_client}")
         try:
             # Check for authentication method
             logger.info("Checking authentication configuration...")
@@ -463,29 +484,90 @@ class ClaudeCodeAdapter:
                     opts.continue_conversation = False
                 return ClaudeSDKClient(options=opts)
 
-            # Create SDK client with retry logic
-            try:
-                logger.info("Creating ClaudeSDKClient context manager...")
-                client_ctx = create_sdk_client(options)
-                logger.info("Entering ClaudeSDKClient context (initializing subprocess)...")
-                client = await client_ctx.__aenter__()
-                logger.info("ClaudeSDKClient initialized successfully!")
-            except Exception as resume_error:
-                error_str = str(resume_error).lower()
-                if "no conversation found" in error_str or "session" in error_str:
-                    logger.warning(f"Conversation continuation failed: {resume_error}")
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=thread_id,
-                        run_id=run_id,
-                        event={"type": "system_log", "message": "⚠️ Could not continue conversation, starting fresh..."}
-                    )
-                    client_ctx = create_sdk_client(options, disable_continue=True)
-                    client = await client_ctx.__aenter__()
-                else:
-                    raise
+            # Check if we can reuse persistent client from app_state
+            client_is_alive = False
+            if has_persistent_client:
+                # Check if the underlying subprocess is still alive
+                client = app_state.claude_client
+                try:
+                    # The SDK client has an internal transport with a subprocess
+                    transport = getattr(client, '_transport', None)
+                    if transport:
+                        proc = getattr(transport, '_process', None) or getattr(transport, 'process', None)
+                        if proc and hasattr(proc, 'returncode'):
+                            client_is_alive = proc.returncode is None
+                            if not client_is_alive:
+                                logger.warning(f"Persistent client subprocess exited (code={proc.returncode}), will create new one")
+                        else:
+                            # Can't check, assume alive
+                            client_is_alive = True
+                    else:
+                        # No transport, assume alive
+                        client_is_alive = True
+                except Exception as e:
+                    logger.warning(f"Could not check client subprocess status: {e}")
+                    client_is_alive = False
+
+            if has_persistent_client and client_is_alive:
+                # Reusing persistent client from app.state
+                logger.info("♻️ Reusing persistent Claude SDK client (conversation continuity)")
+                client = app_state.claude_client
+                client_ctx = None  # Not managing lifecycle - client is persistent
+                yield RawEvent(
+                    type=EventType.RAW,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    event={"type": "system_log", "message": "♻️ Reusing persistent client (instant startup!)"}
+                )
+            else:
+                # Clear stale persistent client if subprocess died
+                if has_persistent_client and not client_is_alive:
+                    logger.info("Clearing stale persistent client")
+                    # Try to disconnect cleanly
+                    try:
+                        if app_state.claude_client:
+                            await app_state.claude_client.disconnect()
+                    except Exception as e:
+                        logger.warning(f"Error disconnecting stale client: {e}")
+                    app_state.claude_client = None
+                    app_state.claude_client_ctx = None
+                
+                # Create new client with full options using explicit connect() pattern
+                # (matches SDK docs example for continuous conversation)
+                logger.info("Creating new ClaudeSDKClient with full options...")
+
+                try:
+                    logger.info("Creating ClaudeSDKClient...")
+                    client = create_sdk_client(options)
+                    logger.info("Connecting ClaudeSDKClient (initializing subprocess)...")
+                    await client.connect()
+                    logger.info("ClaudeSDKClient connected successfully!")
+                    client_ctx = None  # Using explicit connect/disconnect, not context manager
+                except Exception as resume_error:
+                    error_str = str(resume_error).lower()
+                    if "no conversation found" in error_str or "session" in error_str:
+                        logger.warning(f"Conversation continuation failed: {resume_error}")
+                        yield RawEvent(
+                            type=EventType.RAW,
+                            thread_id=thread_id,
+                            run_id=run_id,
+                            event={"type": "system_log", "message": "⚠️ Could not continue conversation, starting fresh..."}
+                        )
+                        client = create_sdk_client(options, disable_continue=True)
+                        await client.connect()
+                    else:
+                        raise
+                
+                # Store in app_state for reuse in subsequent requests
+                if app_state is not None:
+                    logger.info("✅ Storing persistent client in app_state for future requests")
+                    app_state.claude_client = client
+                    app_state.claude_client_ctx = None  # Using explicit connect/disconnect
 
             try:
+                # Store client reference for interrupt support
+                self._active_client = client
+                
                 if not self._first_run:
                     yield RawEvent(
                         type=EventType.RAW,
@@ -706,7 +788,15 @@ class ClaudeCodeAdapter:
                 self._first_run = False
 
             finally:
-                await client_ctx.__aexit__(None, None, None)
+                # Clear active client reference (interrupt no longer valid for this run)
+                self._active_client = None
+                
+                # Only destroy client if we created it (not reusing persistent one)
+                if client_ctx is not None:
+                    logger.info("Cleaning up newly created client for this request")
+                    await client_ctx.__aexit__(None, None, None)
+                else:
+                    logger.info("Keeping persistent client alive for next request")
             
             # Finalize observability
             await obs.finalize()
@@ -721,6 +811,10 @@ class ClaudeCodeAdapter:
         """
         Interrupt the active Claude SDK execution.
         """
+        if self._active_client is None:
+            logger.warning("Interrupt requested but no active client")
+            return
+            
         try:
             logger.info("Sending interrupt signal to Claude SDK client...")
             await self._active_client.interrupt()
@@ -1441,12 +1535,35 @@ class ClaudeCodeAdapter:
 
 
     async def _setup_google_credentials(self):
-        """Copy Google OAuth credentials from mounted Secret to writable workspace location."""
-        # Check if Google OAuth secret is mounted
+        """Copy Google OAuth credentials from mounted Secret to writable workspace location.
+        
+        The secret is always mounted (as placeholder if user hasn't authenticated).
+        This method checks if credentials.json exists and has content.
+        Call refresh_google_credentials() periodically to pick up new credentials after OAuth.
+        """
+        await self._try_copy_google_credentials()
+
+    async def _try_copy_google_credentials(self) -> bool:
+        """Attempt to copy Google credentials from mounted secret.
+        
+        Returns:
+            True if credentials were successfully copied, False otherwise.
+        """
         secret_path = Path("/app/.google_workspace_mcp/credentials/credentials.json")
+        
+        # Check if secret file exists
         if not secret_path.exists():
-            logging.debug("Google OAuth credentials not found at %s, skipping setup", secret_path)
-            return
+            logging.debug("Google OAuth credentials not found at %s (placeholder secret or not mounted)", secret_path)
+            return False
+        
+        # Check if file has content (not empty placeholder)
+        try:
+            if secret_path.stat().st_size == 0:
+                logging.debug("Google OAuth credentials file is empty (user hasn't authenticated yet)")
+                return False
+        except OSError as e:
+            logging.debug("Could not stat Google OAuth credentials file: %s", e)
+            return False
 
         # Create writable credentials directory in workspace
         workspace_creds_dir = Path("/workspace/.google_workspace_mcp/credentials")
@@ -1459,5 +1576,41 @@ class ClaudeCodeAdapter:
             # Make it writable so workspace-mcp can update tokens
             dest_path.chmod(0o644)
             logging.info("✓ Copied Google OAuth credentials from Secret to writable workspace at %s", dest_path)
+            return True
         except Exception as e:
             logging.error("Failed to copy Google OAuth credentials: %s", e)
+            return False
+
+    async def refresh_google_credentials(self) -> bool:
+        """Check for and copy new Google OAuth credentials.
+        
+        Call this method periodically (e.g., before processing a message) to detect
+        when a user completes the OAuth flow and credentials become available.
+        
+        Kubernetes automatically updates the mounted secret volume when the secret
+        changes (typically within ~60 seconds), so this will pick up new credentials
+        without requiring a pod restart.
+        
+        Returns:
+            True if new credentials were found and copied, False otherwise.
+        """
+        dest_path = Path("/workspace/.google_workspace_mcp/credentials/credentials.json")
+        
+        # If we already have credentials in workspace, check if source is newer
+        if dest_path.exists():
+            secret_path = Path("/app/.google_workspace_mcp/credentials/credentials.json")
+            if secret_path.exists():
+                try:
+                    # Compare modification times - secret mount updates when K8s syncs
+                    if secret_path.stat().st_mtime > dest_path.stat().st_mtime:
+                        logging.info("Detected updated Google OAuth credentials, refreshing...")
+                        return await self._try_copy_google_credentials()
+                except OSError:
+                    pass
+            return False
+        
+        # No credentials yet, try to copy
+        if await self._try_copy_google_credentials():
+            logging.info("✓ Google OAuth credentials now available (user completed authentication)")
+            return True
+        return False

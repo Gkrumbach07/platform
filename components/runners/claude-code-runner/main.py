@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
     
     # Import adapter here to avoid circular imports
     from adapter import ClaudeCodeAdapter
+    from pathlib import Path
     
     # Initialize context from environment
     session_id = os.getenv("SESSION_ID", "unknown")
@@ -95,38 +96,55 @@ async def lifespan(app: FastAPI):
     adapter = ClaudeCodeAdapter()
     adapter.context = context
     
+    # Don't create persistent client here - adapter will create it on first request
+    # with proper options (MCP servers, system prompt, model, etc.)
+    # The client will then be stored in app.state for reuse
+    app.state.claude_client = None
+    app.state.claude_client_ctx = None
+    app.state.claude_lock = asyncio.Lock()  # Serialize access to client
+    
+    logger.info("Client will be created on first request with full options")
+    
+    # Check if this is a restart (conversation history exists)
+    history_marker = Path(workspace_path) / ".claude" / "state"
+    
     # Check for INITIAL_PROMPT and auto-execute (only if this is first run)
-    # Skip if conversation history already exists (session restart)
     initial_prompt = os.getenv("INITIAL_PROMPT", "").strip()
-    if initial_prompt:
-        # Check if there's already conversation history
-        from pathlib import Path
-        history_marker = Path(workspace_path) / ".claude" / "state"
-        
-        if history_marker.exists():
-            logger.info(f"INITIAL_PROMPT detected but conversation history exists - skipping auto-execution (session restart)")
-        else:
-            logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute")
-            asyncio.create_task(auto_execute_initial_prompt(initial_prompt, session_id))
+    if initial_prompt and not history_marker.exists():
+        logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute after 3s delay")
+        asyncio.create_task(auto_execute_initial_prompt(initial_prompt, session_id))
+    elif initial_prompt:
+        logger.info(f"INITIAL_PROMPT detected but conversation history exists - skipping auto-execution (session restart)")
     
     logger.info(f"AG-UI server ready for session {session_id}")
     
     yield
     
-    # Cleanup
-    logger.info("Shutting down AG-UI server")
+    # Cleanup - disconnect the client if one was created
+    logger.info("Shutting down AG-UI server...")
+    if app.state.claude_client is not None:
+        logger.info("Disconnecting persistent Claude SDK client...")
+        try:
+            await app.state.claude_client.disconnect()
+        except Exception as e:
+            logger.warning(f"Error disconnecting client: {e}")
+        logger.info("Claude SDK client disconnected")
 
 
 async def auto_execute_initial_prompt(prompt: str, session_id: str):
-    """Auto-execute INITIAL_PROMPT by POSTing to backend (via Service).
+    """Auto-execute INITIAL_PROMPT by POSTing to backend after short delay.
     
-    We POST to the backend so events flow through the proxy and are visible in the UI.
-    Retries handle Service DNS propagation delays naturally.
+    The 3-second delay gives the runner time to fully start. Backend has retry
+    logic to handle if Service DNS isn't ready yet.
     """
     import uuid
     import aiohttp
     
-    logger.info("Auto-executing INITIAL_PROMPT via backend POST (will retry until Service DNS is ready)...")
+    # Give runner time to fully start before backend tries to reach us
+    logger.info("Waiting 3s before auto-executing INITIAL_PROMPT (allow Service DNS to propagate)...")
+    await asyncio.sleep(3)
+    
+    logger.info("Auto-executing INITIAL_PROMPT via backend POST...")
     
     # Get backend URL from environment
     backend_url = os.getenv("BACKEND_API_URL", "").rstrip("/")
@@ -134,9 +152,6 @@ async def auto_execute_initial_prompt(prompt: str, session_id: str):
     
     if not backend_url or not project_name:
         logger.error("Cannot auto-execute INITIAL_PROMPT: BACKEND_API_URL or PROJECT_NAME not set")
-        logger.error(f"  BACKEND_API_URL={os.getenv('BACKEND_API_URL', '(not set)')}")
-        logger.error(f"  PROJECT_NAME={os.getenv('PROJECT_NAME', '(not set)')}")
-        logger.error(f"  AGENTIC_SESSION_NAMESPACE={os.getenv('AGENTIC_SESSION_NAMESPACE', '(not set)')}")
         return
     
     # BACKEND_API_URL already includes /api suffix from operator
@@ -153,7 +168,7 @@ async def auto_execute_initial_prompt(prompt: str, session_id: str):
             "metadata": {
                 "hidden": True,
                 "autoSent": True,
-                "source": "runner_auto_execute"
+                "source": "runner_initial_prompt"
             }
         }]
     }
@@ -164,34 +179,36 @@ async def auto_execute_initial_prompt(prompt: str, session_id: str):
     if bot_token:
         headers["Authorization"] = f"Bearer {bot_token}"
     
-    # Retry aggressively - Service DNS can take 10-20 seconds to propagate
-    # First retry happens immediately, then we back off
-    max_retries = 10
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    logger.info(f"INITIAL_PROMPT auto-execution started: {result}")
+                else:
+                    error_text = await resp.text()
+                    logger.warning(f"INITIAL_PROMPT failed with status {resp.status}: {error_text[:200]}")
+    except Exception as e:
+        logger.warning(f"INITIAL_PROMPT auto-execution error (backend will retry): {e}")
+
+
+async def invalidate_persistent_client(app):
+    """Destroy persistent client so new one is created with new options.
     
-    for attempt in range(max_retries):
-        # Exponential backoff: 0, 2, 3, 4, 5, 5, 5... seconds
-        if attempt > 0:
-            delay = min(2 + attempt, 5)
-            await asyncio.sleep(delay)
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        logger.info(f"INITIAL_PROMPT auto-execution started: {result}")
-                        return
-                    else:
-                        error_text = await resp.text()
-                        logger.warning(f"INITIAL_PROMPT attempt {attempt + 1}/{max_retries} failed: {resp.status} - {error_text[:200]}")
-        
-        except aiohttp.ClientConnectorError as e:
-            # Connection error - likely Service DNS not ready yet
-            logger.info(f"INITIAL_PROMPT attempt {attempt + 1}/{max_retries}: Service not ready yet, will retry...")
-        except Exception as e:
-            logger.warning(f"INITIAL_PROMPT attempt {attempt + 1}/{max_retries} error: {e}")
-    
-    logger.error(f"Failed to auto-execute INITIAL_PROMPT after {max_retries} attempts (Service DNS may not have propagated)")
+    Call this when workflow or repos change and client needs new configuration.
+    """
+    async with app.state.claude_lock:
+        if app.state.claude_client is not None:
+            logger.info("🔄 Invalidating persistent client (workflow/repo change)...")
+            try:
+                await app.state.claude_client.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting old client: {e}")
+            app.state.claude_client = None
+            app.state.claude_client_ctx = None
+            logger.info("✅ Persistent client invalidated - will recreate on next request")
+        else:
+            logger.info("No persistent client to invalidate")
 
 
 app = FastAPI(
@@ -245,10 +262,16 @@ async def run_agent(input_data: RunnerInput, request: Request):
                 _adapter_initialized = True
             
             logger.info("Starting adapter.process_run()...")
-            # Process the actual run
-            async for event in adapter.process_run(run_agent_input):
-                logger.debug(f"Yielding run event: {event.type}")
-                yield encoder.encode(event)
+            
+            # Use lock to serialize access to the persistent client
+            async with request.app.state.claude_lock:
+                # Pass app.state so adapter can create/reuse persistent client
+                async for event in adapter.process_run(
+                    run_agent_input, 
+                    app_state=request.app.state
+                ):
+                    logger.debug(f"Yielding run event: {event.type}")
+                    yield encoder.encode(event)
             logger.info("adapter.process_run() completed")
         except Exception as e:
             logger.error(f"Error in event generator: {e}")
@@ -323,7 +346,10 @@ async def change_workflow(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    logger.info("Workflow updated, adapter will reinitialize on next run")
+    # Destroy persistent client so new one is created with new options
+    await invalidate_persistent_client(request.app)
+    
+    logger.info("Workflow updated, persistent client invalidated - will recreate on next run")
     
     # Trigger a new run to greet user with workflow context
     # This runs in background via backend POST
@@ -431,7 +457,10 @@ async def add_repo(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    logger.info(f"Repo added, adapter will reinitialize on next run")
+    # Destroy persistent client so new one is created with new repo config
+    await invalidate_persistent_client(request.app)
+    
+    logger.info(f"Repo added, persistent client invalidated - will recreate on next run")
     
     return {"message": "Repository added"}
 
@@ -468,7 +497,10 @@ async def remove_repo(request: Request):
     _adapter_initialized = False
     adapter._first_run = True
     
-    logger.info(f"Repo removed, adapter will reinitialize on next run")
+    # Destroy persistent client so new one is created with new repo config
+    await invalidate_persistent_client(request.app)
+    
+    logger.info(f"Repo removed, persistent client invalidated - will recreate on next run")
     
     return {"message": "Repository removed"}
 

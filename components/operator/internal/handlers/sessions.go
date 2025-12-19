@@ -1376,35 +1376,69 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 		}
 	}
 
-	// Check for Google OAuth secret and mount it if present (for MCP Google Drive integration)
+	// Create placeholder Google OAuth secret if it doesn't exist (for MCP Google Workspace integration)
+	// This ensures the volume mount is always present so K8s can sync credentials after OAuth completion
 	googleOAuthSecretName := fmt.Sprintf("%s-google-oauth", name)
-	if _, err := config.K8sClient.CoreV1().Secrets(sessionNamespace).Get(context.TODO(), googleOAuthSecretName, v1.GetOptions{}); err == nil {
-		log.Printf("Found Google OAuth secret %s, mounting to runner container", googleOAuthSecretName)
-		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "google-oauth",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: googleOAuthSecretName,
-					Optional:   boolPtr(true), // Don't fail if secret disappears before pod starts
+	if _, err := config.K8sClient.CoreV1().Secrets(sessionNamespace).Get(context.TODO(), googleOAuthSecretName, v1.GetOptions{}); errors.IsNotFound(err) {
+		// Create empty placeholder secret - backend will populate it after user completes OAuth
+		placeholderSecret := &corev1.Secret{
+			ObjectMeta: v1.ObjectMeta{
+				Name:      googleOAuthSecretName,
+				Namespace: sessionNamespace,
+				Labels: map[string]string{
+					"app":                      "ambient-code",
+					"ambient-code.io/session":  name,
+					"ambient-code.io/provider": "google",
+					"ambient-code.io/oauth":    "placeholder",
+				},
+				OwnerReferences: []v1.OwnerReference{
+					{
+						APIVersion: "vteam.ambient-code/v1",
+						Kind:       "AgenticSession",
+						Name:       currentObj.GetName(),
+						UID:        currentObj.GetUID(),
+						Controller: boolPtr(true),
+					},
 				},
 			},
-		})
-		// Mount to the ambient-code-runner container
-		for i := range job.Spec.Template.Spec.Containers {
-			if job.Spec.Template.Spec.Containers[i].Name == "ambient-code-runner" {
-				job.Spec.Template.Spec.Containers[i].VolumeMounts = append(job.Spec.Template.Spec.Containers[i].VolumeMounts, corev1.VolumeMount{
-					Name:      "google-oauth",
-					MountPath: "/app/.google_workspace_mcp/credentials",
-					ReadOnly:  true,
-				})
-				log.Printf("Mounted Google OAuth secret to /app/.google_workspace_mcp/credentials in runner container for session %s", name)
-				break
-			}
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"credentials.json": []byte(""), // Empty placeholder, runner checks for content
+			},
 		}
-	} else if !errors.IsNotFound(err) {
-		log.Printf("Error checking for Google OAuth secret %s: %v (continuing without MCP)", googleOAuthSecretName, err)
+		if _, createErr := config.K8sClient.CoreV1().Secrets(sessionNamespace).Create(context.TODO(), placeholderSecret, v1.CreateOptions{}); createErr != nil {
+			log.Printf("Warning: Failed to create placeholder Google OAuth secret %s: %v", googleOAuthSecretName, createErr)
+		} else {
+			log.Printf("Created placeholder Google OAuth secret %s (will be populated after user OAuth)", googleOAuthSecretName)
+		}
+	} else if err != nil {
+		log.Printf("Error checking for Google OAuth secret %s: %v", googleOAuthSecretName, err)
 	} else {
-		log.Printf("No Google OAuth secret found (session %s), MCP Google Drive integration will not be available", name)
+		log.Printf("Found existing Google OAuth secret %s", googleOAuthSecretName)
+	}
+
+	// Always mount Google OAuth secret (with Optional: true so pod starts even if empty)
+	// K8s will sync updates when backend populates credentials after OAuth completion (~60s)
+	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: "google-oauth",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: googleOAuthSecretName,
+				Optional:   boolPtr(true), // Don't fail if secret is empty or missing
+			},
+		},
+	})
+	// Mount to the ambient-code-runner container
+	for i := range job.Spec.Template.Spec.Containers {
+		if job.Spec.Template.Spec.Containers[i].Name == "ambient-code-runner" {
+			job.Spec.Template.Spec.Containers[i].VolumeMounts = append(job.Spec.Template.Spec.Containers[i].VolumeMounts, corev1.VolumeMount{
+				Name:      "google-oauth",
+				MountPath: "/app/.google_workspace_mcp/credentials",
+				ReadOnly:  true,
+			})
+			log.Printf("Mounted Google OAuth secret to /app/.google_workspace_mcp/credentials in runner container for session %s", name)
+			break
+		}
 	}
 
 	// Do not mount runner Secret volume; runner fetches tokens on demand

@@ -472,7 +472,7 @@ async def health():
 
 def main():
     """Start the AG-UI server."""
-    port = int(os.getenv("AGUI_PORT", "8000"))
+    port = int(os.getenv("AGUI_PORT", "8001"))
     host = os.getenv("AGUI_HOST", "0.0.0.0")
     
     logger.info(f"Starting Claude Code AG-UI server on {host}:{port}")

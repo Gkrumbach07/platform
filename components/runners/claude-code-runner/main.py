@@ -98,15 +98,19 @@ async def lifespan(app: FastAPI):
     
     logger.info("Adapter initialized - fresh client will be created for each run")
     
-    # Check if this is a restart/resume (initial prompt was already sent)
-    # We use our own marker file since Claude SDK's internal state location varies
+    # Check if this is a restart/resume or continuation
+    # - Marker file: session was already initialized (resume)
+    # - Parent session ID: this is a child session continuing from parent
     initial_prompt_marker = Path(workspace_path) / ".initial_prompt_sent"
+    parent_session_id = os.getenv("PARENT_SESSION_ID", "").strip()
     
-    # Check for INITIAL_PROMPT and auto-execute (only if this is first run)
+    # Check for INITIAL_PROMPT and auto-execute (only if this is a fresh start)
     initial_prompt = os.getenv("INITIAL_PROMPT", "").strip()
-    if initial_prompt and not initial_prompt_marker.exists():
+    if initial_prompt and not initial_prompt_marker.exists() and not parent_session_id:
         logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute after 3s delay")
         asyncio.create_task(auto_execute_initial_prompt(initial_prompt, session_id, initial_prompt_marker))
+    elif initial_prompt and parent_session_id:
+        logger.info(f"INITIAL_PROMPT detected but this is a continuation (parent={parent_session_id[:12]}...) - skipping")
     elif initial_prompt:
         logger.info(f"INITIAL_PROMPT detected but marker exists - skipping auto-execution (session resume)")
     

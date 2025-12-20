@@ -1,10 +1,11 @@
-.PHONY: help setup build-all build-frontend build-backend build-operator build-runner deploy clean
+.PHONY: help setup build-all build-frontend build-backend build-operator build-runner build-state-sync deploy clean
 .PHONY: local-up local-down local-clean local-status local-rebuild local-reload-backend local-reload-frontend local-reload-operator local-sync-version
 .PHONY: local-dev-token
 .PHONY: local-logs local-logs-backend local-logs-frontend local-logs-operator local-shell local-shell-frontend
 .PHONY: local-test local-test-dev local-test-quick test-all local-url local-troubleshoot local-port-forward local-stop-port-forward
 .PHONY: push-all registry-login setup-hooks remove-hooks check-minikube check-kubectl
 .PHONY: e2e-test e2e-setup e2e-clean deploy-langfuse-openshift
+.PHONY: setup-minio minio-console minio-logs minio-status
 .PHONY: validate-makefile lint-makefile check-shell makefile-health
 .PHONY: _create-operator-config _auto-port-forward _show-access-info _build-and-load
 
@@ -36,6 +37,7 @@ FRONTEND_IMAGE ?= vteam_frontend:latest
 BACKEND_IMAGE ?= vteam_backend:latest
 OPERATOR_IMAGE ?= vteam_operator:latest
 RUNNER_IMAGE ?= vteam_claude_runner:latest
+STATE_SYNC_IMAGE ?= vteam_state_sync:latest
 
 # Build metadata (captured at build time)
 GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -91,7 +93,7 @@ help: ## Display this help message
 
 ##@ Building
 
-build-all: build-frontend build-backend build-operator build-runner ## Build all container images
+build-all: build-frontend build-backend build-operator build-runner build-state-sync ## Build all container images
 
 build-frontend: ## Build frontend image
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building frontend with $(CONTAINER_ENGINE)..."
@@ -145,6 +147,13 @@ build-runner: ## Build Claude Code runner image
 		-t $(RUNNER_IMAGE) -f claude-code-runner/Dockerfile .
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Runner built: $(RUNNER_IMAGE)"
 
+build-state-sync: ## Build state-sync image for S3 persistence
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building state-sync with $(CONTAINER_ENGINE)..."
+	@echo "  Git: $(GIT_BRANCH)@$(GIT_COMMIT_SHORT)$(GIT_DIRTY)"
+	@cd components/runners/state-sync && $(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
+		-t vteam_state_sync:latest .
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) State-sync built: vteam_state_sync:latest"
+
 ##@ Git Hooks
 
 setup-hooks: ## Install git hooks for branch protection
@@ -164,12 +173,58 @@ registry-login: ## Login to container registry
 
 push-all: registry-login ## Push all images to registry
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Pushing images to $(REGISTRY)..."
-	@for image in $(FRONTEND_IMAGE) $(BACKEND_IMAGE) $(OPERATOR_IMAGE) $(RUNNER_IMAGE); do \
+	@for image in $(FRONTEND_IMAGE) $(BACKEND_IMAGE) $(OPERATOR_IMAGE) $(RUNNER_IMAGE) $(STATE_SYNC_IMAGE); do \
 		echo "  Tagging and pushing $$image..."; \
 		$(CONTAINER_ENGINE) tag $$image $(REGISTRY)/$$image && \
 		$(CONTAINER_ENGINE) push $(REGISTRY)/$$image; \
 	done
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) All images pushed"
+
+##@ MinIO S3 Storage
+
+setup-minio: ## Set up MinIO and create initial bucket
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Setting up MinIO for S3 state storage..."
+	@./scripts/setup-minio.sh
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) MinIO setup complete"
+
+minio-console: ## Open MinIO console (port-forward to localhost:9001)
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Opening MinIO console at http://localhost:9001"
+	@echo "  Login: admin / changeme123 (or your configured credentials)"
+	@kubectl port-forward svc/minio 9001:9001 -n $(NAMESPACE)
+
+minio-logs: ## View MinIO logs
+	@kubectl logs -f deployment/minio -n $(NAMESPACE)
+
+minio-status: ## Check MinIO status
+	@echo "$(COLOR_BOLD)MinIO Status$(COLOR_RESET)"
+	@kubectl get deployment,pod,svc,pvc -l app=minio -n $(NAMESPACE)
+
+##@ Observability
+
+deploy-observability: ## Deploy observability (OTel + OpenShift Prometheus)
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Deploying observability stack..."
+	@kubectl apply -k components/manifests/observability/
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Observability deployed (OTel + ServiceMonitor)"
+	@echo "  View metrics: OpenShift Console → Observe → Metrics"
+	@echo "  Optional Grafana: make add-grafana"
+
+add-grafana: ## Add Grafana on top of observability stack
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Adding Grafana..."
+	@kubectl apply -k components/manifests/observability/overlays/with-grafana/
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Grafana deployed"
+	@echo "  Create route: oc create route edge grafana --service=grafana -n $(NAMESPACE)"
+
+clean-observability: ## Remove observability components
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Removing observability..."
+	@kubectl delete -k components/manifests/observability/overlays/with-grafana/ 2>/dev/null || true
+	@kubectl delete -k components/manifests/observability/ 2>/dev/null || true
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Observability removed"
+
+grafana-dashboard: ## Open Grafana (create route first)
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Opening Grafana..."
+	@oc create route edge grafana --service=grafana -n $(NAMESPACE) 2>/dev/null || echo "Route already exists"
+	@echo "  URL: https://$$(oc get route grafana -n $(NAMESPACE) -o jsonpath='{.spec.host}')"
+	@echo "  Login: admin/admin"
 
 ##@ Local Development (Minikube)
 

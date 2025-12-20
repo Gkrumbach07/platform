@@ -87,13 +87,11 @@ class ClaudeCodeAdapter:
         # Copy Google OAuth credentials from mounted Secret to writable workspace location
         await self._setup_google_credentials()
         
-        # Prepare workspace from input repo if provided
-        async for event in self._prepare_workspace():
-            yield event
-            
-        # Initialize workflow if ACTIVE_WORKFLOW env vars are set
-        async for event in self._initialize_workflow_if_set():
-            yield event
+        # Workspace is already prepared by init container (hydrate.sh)
+        # - Repos cloned to /workspace/repos/
+        # - Workflows cloned to /workspace/workflows/
+        # - State hydrated from S3 to .claude/, artifacts/, file-uploads/
+        logger.info("Workspace prepared by init container, validating...")
             
         # Validate prerequisite files exist for phase-based commands
         try:
@@ -361,9 +359,11 @@ class ClaudeCodeAdapter:
             )
             obs._pending_initial_prompt = prompt
 
-            # Check if continuing from previous session
-            parent_session_id = self.context.get_env('PARENT_SESSION_ID', '').strip()
-            is_continuation = bool(parent_session_id)
+            # Check if this is a resume session via IS_RESUME env var
+            # This is set by the operator when restarting a stopped/completed/failed session
+            is_continuation = self.context.get_env('IS_RESUME', '').strip().lower() == 'true'
+            if is_continuation:
+                logger.info("IS_RESUME=true - treating as continuation")
 
             # Determine cwd and additional dirs
             repos_cfg = self._get_repos_config()
@@ -898,160 +898,34 @@ class ClaudeCodeAdapter:
         }
 
     async def _prepare_workspace(self) -> AsyncIterator[BaseEvent]:
-        """Clone input repo/branch into workspace and configure git remotes."""
+        """Validate workspace prepared by init container.
+        
+        The init-hydrate container now handles:
+        - Downloading state from S3 (.claude/, artifacts/, file-uploads/)
+        - Cloning repos to /workspace/repos/
+        - Cloning workflows to /workspace/workflows/
+        
+        Runner just validates and logs what's ready.
+        """
         workspace = Path(self.context.workspace_path)
-        workspace.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Validating workspace at {workspace}")
+        
+        # Check what was hydrated
+        hydrated_paths = []
+        for path_name in [".claude", "artifacts", "file-uploads"]:
+            path_dir = workspace / path_name
+            if path_dir.exists():
+                file_count = len([f for f in path_dir.rglob("*") if f.is_file()])
+                if file_count > 0:
+                    hydrated_paths.append(f"{path_name} ({file_count} files)")
+        
+        if hydrated_paths:
+            logger.info(f"Hydrated from S3: {', '.join(hydrated_paths)}")
+        else:
+            logger.info("No state hydrated (fresh session)")
+        
+        # No further preparation needed - init container did the work
 
-        parent_session_id = self.context.get_env('PARENT_SESSION_ID', '').strip()
-        reusing_workspace = bool(parent_session_id)
-
-        logger.info(f"Workspace preparation: parent_session_id={parent_session_id[:8] if parent_session_id else 'None'}, reusing={reusing_workspace}")
-
-        repos_cfg = self._get_repos_config()
-        if repos_cfg:
-            async for event in self._prepare_multi_repo_workspace(workspace, repos_cfg, reusing_workspace):
-                yield event
-            return
-
-        # Single-repo legacy flow
-        input_repo = os.getenv("INPUT_REPO_URL", "").strip()
-        if not input_repo:
-            logger.info("No INPUT_REPO_URL configured, skipping single-repo setup")
-            return
-
-        input_branch = os.getenv("INPUT_BRANCH", "").strip() or "main"
-        output_repo = os.getenv("OUTPUT_REPO_URL", "").strip()
-
-        token = await self._fetch_token_for_url(input_repo)
-        workspace_has_git = (workspace / ".git").exists()
-
-        try:
-            if not workspace_has_git:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "📥 Cloning input repository..."}
-                )
-                clone_url = self._url_with_token(input_repo, token) if token else input_repo
-                await self._run_cmd(["git", "clone", "--branch", input_branch, "--single-branch", clone_url, str(workspace)], cwd=str(workspace.parent))
-                await self._run_cmd(["git", "remote", "set-url", "origin", clone_url], cwd=str(workspace), ignore_errors=True)
-            elif reusing_workspace:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "✓ Preserving workspace (continuation)"}
-                )
-                await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(input_repo, token) if token else input_repo], cwd=str(workspace), ignore_errors=True)
-            else:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "🔄 Resetting workspace to clean state"}
-                )
-                await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(input_repo, token) if token else input_repo], cwd=str(workspace))
-                await self._run_cmd(["git", "fetch", "origin", input_branch], cwd=str(workspace))
-                await self._run_cmd(["git", "checkout", input_branch], cwd=str(workspace))
-                await self._run_cmd(["git", "reset", "--hard", f"origin/{input_branch}"], cwd=str(workspace))
-
-            # Git identity
-            user_name = os.getenv("GIT_USER_NAME", "").strip() or "Ambient Code Bot"
-            user_email = os.getenv("GIT_USER_EMAIL", "").strip() or "bot@ambient-code.local"
-            await self._run_cmd(["git", "config", "user.name", user_name], cwd=str(workspace))
-            await self._run_cmd(["git", "config", "user.email", user_email], cwd=str(workspace))
-
-            if output_repo:
-                out_url = self._url_with_token(output_repo, token) if token else output_repo
-                await self._run_cmd(["git", "remote", "remove", "output"], cwd=str(workspace), ignore_errors=True)
-                await self._run_cmd(["git", "remote", "add", "output", out_url], cwd=str(workspace))
-
-        except Exception as e:
-            logger.error(f"Failed to prepare workspace: {e}")
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"Workspace preparation failed: {e}"}
-            )
-
-        # Create artifacts directory
-        try:
-            artifacts_dir = workspace / "artifacts"
-            artifacts_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.warning(f"Failed to create artifacts directory: {e}")
-
-    async def _prepare_multi_repo_workspace(
-        self, workspace: Path, repos_cfg: list, reusing_workspace: bool
-    ) -> AsyncIterator[BaseEvent]:
-        """Prepare workspace for multi-repo mode."""
-        try:
-            for r in repos_cfg:
-                name = (r.get('name') or '').strip()
-                inp = r.get('input') or {}
-                url = (inp.get('url') or '').strip()
-                branch = (inp.get('branch') or '').strip() or 'main'
-                if not name or not url:
-                    continue
-
-                repo_dir = workspace / name
-                token = await self._fetch_token_for_url(url)
-                repo_exists = repo_dir.exists() and (repo_dir / ".git").exists()
-
-                if not repo_exists:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"📥 Cloning {name}..."}
-                    )
-                    clone_url = self._url_with_token(url, token) if token else url
-                    await self._run_cmd(["git", "clone", "--branch", branch, "--single-branch", clone_url, str(repo_dir)], cwd=str(workspace))
-                    await self._run_cmd(["git", "remote", "set-url", "origin", clone_url], cwd=str(repo_dir), ignore_errors=True)
-                elif reusing_workspace:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"✓ Preserving {name} (continuation)"}
-                    )
-                    await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(url, token) if token else url], cwd=str(repo_dir), ignore_errors=True)
-                else:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"🔄 Resetting {name} to clean state"}
-                    )
-                    await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(url, token) if token else url], cwd=str(repo_dir), ignore_errors=True)
-                    await self._run_cmd(["git", "fetch", "origin", branch], cwd=str(repo_dir))
-                    await self._run_cmd(["git", "checkout", branch], cwd=str(repo_dir))
-                    await self._run_cmd(["git", "reset", "--hard", f"origin/{branch}"], cwd=str(repo_dir))
-
-                # Git identity
-                user_name = os.getenv("GIT_USER_NAME", "").strip() or "Ambient Code Bot"
-                user_email = os.getenv("GIT_USER_EMAIL", "").strip() or "bot@ambient-code.local"
-                await self._run_cmd(["git", "config", "user.name", user_name], cwd=str(repo_dir))
-                await self._run_cmd(["git", "config", "user.email", user_email], cwd=str(repo_dir))
-
-                # Configure output remote
-                out = r.get('output') or {}
-                out_url_raw = (out.get('url') or '').strip()
-                if out_url_raw:
-                    out_url = self._url_with_token(out_url_raw, token) if token else out_url_raw
-                    await self._run_cmd(["git", "remote", "remove", "output"], cwd=str(repo_dir), ignore_errors=True)
-                    await self._run_cmd(["git", "remote", "add", "output", out_url], cwd=str(repo_dir))
-
-        except Exception as e:
-            logger.error(f"Failed to prepare multi-repo workspace: {e}")
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"Workspace preparation failed: {e}"}
-            )
 
     async def _validate_prerequisites(self):
         """Validate prerequisite files exist for phase-based slash commands."""
@@ -1086,13 +960,10 @@ class ClaudeCodeAdapter:
                 break
 
     async def _initialize_workflow_if_set(self) -> AsyncIterator[BaseEvent]:
-        """Initialize workflow on startup if ACTIVE_WORKFLOW env vars are set."""
+        """Validate workflow was cloned by init container."""
         active_workflow_url = (os.getenv('ACTIVE_WORKFLOW_GIT_URL') or '').strip()
         if not active_workflow_url:
             return
-
-        active_workflow_branch = (os.getenv('ACTIVE_WORKFLOW_BRANCH') or 'main').strip()
-        active_workflow_path = (os.getenv('ACTIVE_WORKFLOW_PATH') or '').strip()
 
         try:
             owner, repo, _ = self._parse_owner_repo(active_workflow_url)
@@ -1105,79 +976,24 @@ class ClaudeCodeAdapter:
             derived_name = (derived_name or '').removesuffix('.git').strip()
 
             if not derived_name:
-                logger.warning("Could not derive workflow name from URL, skipping initialization")
+                logger.warning("Could not derive workflow name from URL")
                 return
 
-            workflow_dir = Path(self.context.workspace_path) / "workflows" / derived_name
-
-            if workflow_dir.exists():
-                logger.info(f"Workflow {derived_name} already exists, skipping initialization")
-                return
-
-            logger.info(f"Initializing workflow {derived_name} from CR spec on startup")
-            async for event in self._clone_workflow_repository(active_workflow_url, active_workflow_branch, active_workflow_path, derived_name):
-                yield event
+            # Check for cloned workflow (init container uses -clone-temp suffix)
+            workspace = Path(self.context.workspace_path)
+            workflow_temp_dir = workspace / "workflows" / f"{derived_name}-clone-temp"
+            workflow_dir = workspace / "workflows" / derived_name
+            
+            if workflow_temp_dir.exists():
+                logger.info(f"Workflow {derived_name} cloned by init container at {workflow_temp_dir.name}")
+            elif workflow_dir.exists():
+                logger.info(f"Workflow {derived_name} available at {workflow_dir.name}")
+            else:
+                logger.warning(f"Workflow {derived_name} not found (init container may have failed to clone)")
 
         except Exception as e:
-            logger.error(f"Failed to initialize workflow on startup: {e}")
+            logger.error(f"Failed to validate workflow: {e}")
 
-    async def _clone_workflow_repository(
-        self, git_url: str, branch: str, path: str, workflow_name: str
-    ) -> AsyncIterator[BaseEvent]:
-        """Clone workflow repository."""
-        workspace = Path(self.context.workspace_path)
-        workflow_dir = workspace / "workflows" / workflow_name
-        temp_clone_dir = workspace / "workflows" / f"{workflow_name}-clone-temp"
-
-        if workflow_dir.exists():
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"✓ Workflow {workflow_name} already loaded"}
-            )
-            return
-
-        token = await self._fetch_token_for_url(git_url)
-
-        yield RawEvent(
-            type=EventType.RAW,
-            thread_id=self._current_thread_id or self.context.session_id,
-            run_id=self._current_run_id or "init",
-            event={"type": "system_log", "message": f"📥 Cloning workflow {workflow_name}..."}
-        )
-
-        clone_url = self._url_with_token(git_url, token) if token else git_url
-        await self._run_cmd(["git", "clone", "--branch", branch, "--single-branch", clone_url, str(temp_clone_dir)], cwd=str(workspace))
-
-        if path and path.strip():
-            subdir_path = temp_clone_dir / path.strip()
-            if subdir_path.exists() and subdir_path.is_dir():
-                shutil.copytree(subdir_path, workflow_dir)
-                shutil.rmtree(temp_clone_dir)
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": f"✓ Extracted workflow from: {path}"}
-                )
-            else:
-                temp_clone_dir.rename(workflow_dir)
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": f"⚠️ Path '{path}' not found, using full repository"}
-                )
-        else:
-            temp_clone_dir.rename(workflow_dir)
-
-        yield RawEvent(
-            type=EventType.RAW,
-            thread_id=self._current_thread_id or self.context.session_id,
-            run_id=self._current_run_id or "init",
-            event={"type": "system_log", "message": f"✅ Workflow {workflow_name} ready"}
-        )
 
     async def _run_cmd(self, cmd, cwd=None, capture_stdout=False, ignore_errors=False):
         """Run a subprocess command asynchronously."""

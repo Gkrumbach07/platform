@@ -97,17 +97,20 @@ async def lifespan(app: FastAPI):
     
     logger.info("Adapter initialized - fresh client will be created for each run")
     
-    # Check if this is a continuation (has parent session)
-    # PARENT_SESSION_ID is set when continuing from another session
-    parent_session_id = os.getenv("PARENT_SESSION_ID", "").strip()
+    # Check if this is a resume session via IS_RESUME env var
+    # This is set by the operator when restarting a stopped/completed/failed session
+    is_resume = os.getenv("IS_RESUME", "").strip().lower() == "true"
+    if is_resume:
+        logger.info("IS_RESUME=true - this is a resumed session, will skip INITIAL_PROMPT")
     
-    # Check for INITIAL_PROMPT and auto-execute (only if no parent session)
+    # Check for INITIAL_PROMPT and auto-execute (only if not a resume)
     initial_prompt = os.getenv("INITIAL_PROMPT", "").strip()
-    if initial_prompt and not parent_session_id:
-        logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute after 3s delay")
+    if initial_prompt and not is_resume:
+        delay = os.getenv("INITIAL_PROMPT_DELAY_SECONDS", "1")
+        logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute after {delay}s delay")
         asyncio.create_task(auto_execute_initial_prompt(initial_prompt, session_id))
-    elif initial_prompt:
-        logger.info(f"INITIAL_PROMPT detected but has parent session ({parent_session_id[:12]}...) - skipping")
+    elif initial_prompt and is_resume:
+        logger.info("INITIAL_PROMPT detected but IS_RESUME=true - skipping (this is a resume)")
     
     logger.info(f"AG-UI server ready for session {session_id}")
     
@@ -120,17 +123,19 @@ async def lifespan(app: FastAPI):
 async def auto_execute_initial_prompt(prompt: str, session_id: str):
     """Auto-execute INITIAL_PROMPT by POSTing to backend after short delay.
     
-    The 3-second delay gives the runner time to fully start. Backend has retry
-    logic to handle if Service DNS isn't ready yet.
+    The delay gives the runner service time to register in DNS. Backend has retry
+    logic to handle if Service DNS isn't ready yet, so this can be short.
     
-    Only called for fresh sessions (no PARENT_SESSION_ID set).
+    Only called for fresh sessions (no hydrated state in .claude/).
     """
     import uuid
     import aiohttp
     
-    # Give runner time to fully start before backend tries to reach us
-    logger.info("Waiting 3s before auto-executing INITIAL_PROMPT (allow Service DNS to propagate)...")
-    await asyncio.sleep(3)
+    # Configurable delay (default 1s, was 3s)
+    # Backend has retry logic, so we don't need to wait long
+    delay_seconds = float(os.getenv("INITIAL_PROMPT_DELAY_SECONDS", "1"))
+    logger.info(f"Waiting {delay_seconds}s before auto-executing INITIAL_PROMPT (allow Service DNS to propagate)...")
+    await asyncio.sleep(delay_seconds)
     
     logger.info("Auto-executing INITIAL_PROMPT via backend POST...")
     

@@ -68,5 +68,7 @@ RUN chmod +x ./operator && chmod 775 /app
 
 USER 1001
 
-# Command to run the executable
-CMD ["./operator"]
+# Use ENTRYPOINT so that args from K8s are appended, not replaced
+ENTRYPOINT ["./operator"]
+# Default args (can be overridden by K8s deployment)
+CMD []

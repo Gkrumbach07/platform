@@ -140,3 +140,11 @@ reports/
 # Security scan artifacts (transient)
 .security-scan/
 .security-scan.zip
+
+# Secrets (should use .example templates)
+**/minio-credentials-secret.yaml
+
+# Build artifacts and logs
+build.log
+*.log
+!components/**/*.log

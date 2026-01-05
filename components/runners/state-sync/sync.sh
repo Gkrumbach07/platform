@@ -16,11 +16,12 @@ NAMESPACE="${NAMESPACE//[^a-zA-Z0-9-]/}"
 SESSION_NAME="${SESSION_NAME//[^a-zA-Z0-9-]/}"
 
 # Paths to sync (non-git content)
+# Note: .claude uses /app/.claude (SubPath mount), others use /workspace
 SYNC_PATHS=(
-    ".claude"
     "artifacts"
     "file-uploads"
 )
+CLAUDE_DATA_PATH="/app/.claude"
 
 # Patterns to exclude from sync
 EXCLUDE_PATTERNS=(
@@ -57,6 +58,14 @@ EOF
 # Check total size before sync
 check_size() {
     local total=0
+    
+    # Check .claude directory size (at /app/.claude via SubPath)
+    if [ -d "${CLAUDE_DATA_PATH}" ]; then
+        size=$(du -sb "${CLAUDE_DATA_PATH}" 2>/dev/null | cut -f1 || echo 0)
+        total=$((total + size))
+    fi
+    
+    # Check other paths in /workspace
     for path in "${SYNC_PATHS[@]}"; do
         if [ -d "/workspace/${path}" ]; then
             size=$(du -sb "/workspace/${path}" 2>/dev/null | cut -f1 || echo 0)
@@ -79,6 +88,26 @@ sync_to_s3() {
     echo "[$(date -Iseconds)] Starting sync to S3..."
     
     local synced=0
+    
+    # Sync .claude data from /app/.claude (SubPath mount matches runner container)
+    if [ -d "${CLAUDE_DATA_PATH}" ]; then
+        echo "  Syncing .claude/..."
+        if rclone --config /tmp/.config/rclone/rclone.conf sync "${CLAUDE_DATA_PATH}" "${s3_path}/.claude/" \
+            --checksum \
+            --copy-links \
+            --transfers 4 \
+            --fast-list \
+            --stats-one-line \
+            --max-size ${MAX_SYNC_SIZE} \
+            $(printf -- '--exclude %s ' "${EXCLUDE_PATTERNS[@]}") \
+            2>&1; then
+            synced=$((synced + 1))
+        else
+            echo "  Warning: sync of .claude had errors"
+        fi
+    fi
+    
+    # Sync other paths from /workspace
     for path in "${SYNC_PATHS[@]}"; do
         if [ -d "/workspace/${path}" ]; then
             echo "  Syncing ${path}/..."

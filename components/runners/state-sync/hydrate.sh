@@ -14,11 +14,12 @@ NAMESPACE="${NAMESPACE//[^a-zA-Z0-9-]/}"
 SESSION_NAME="${SESSION_NAME//[^a-zA-Z0-9-]/}"
 
 # Paths to sync (must match sync.sh)
+# Note: .claude uses /app/.claude (SubPath mount), others use /workspace
 SYNC_PATHS=(
-    ".claude"
     "artifacts"
     "file-uploads"
 )
+CLAUDE_DATA_PATH="/app/.claude"
 
 # Error handler
 error_exit() {
@@ -56,14 +57,15 @@ echo "========================================="
 
 # Create workspace structure
 echo "Creating workspace structure..."
-mkdir -p /workspace/.claude || error_exit "Failed to create .claude directory"
+# .claude is mounted at /app/.claude via SubPath (same location as runner container)
+mkdir -p "${CLAUDE_DATA_PATH}" || error_exit "Failed to create .claude directory"
 mkdir -p /workspace/artifacts || error_exit "Failed to create artifacts directory"
 mkdir -p /workspace/file-uploads || error_exit "Failed to create file-uploads directory"
 mkdir -p /workspace/repos || error_exit "Failed to create repos directory"
 
 # Set permissions on created directories (not root workspace which may be owned by different user)
 # Use 755 instead of 777 - readable by all, writable only by owner
-chmod 755 /workspace/.claude /workspace/artifacts /workspace/file-uploads /workspace/repos 2>/dev/null || true
+chmod 755 "${CLAUDE_DATA_PATH}" /workspace/artifacts /workspace/file-uploads /workspace/repos 2>/dev/null || true
 
 # Check if S3 is configured
 if [ -z "${S3_ENDPOINT}" ] || [ -z "${S3_BUCKET}" ] || [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
@@ -90,7 +92,19 @@ echo "Checking for existing session state in S3..."
 if rclone --config /tmp/.config/rclone/rclone.conf lsf "${S3_PATH}/" 2>/dev/null | grep -q .; then
     echo "Found existing session state, downloading from S3..."
     
-    # Download each sync path if it exists
+    # Download .claude data to /app/.claude (SubPath mount matches runner container)
+    if rclone --config /tmp/.config/rclone/rclone.conf lsf "${S3_PATH}/.claude/" 2>/dev/null | grep -q .; then
+        echo "  Downloading .claude/..."
+        rclone --config /tmp/.config/rclone/rclone.conf copy "${S3_PATH}/.claude/" "${CLAUDE_DATA_PATH}/" \
+            --copy-links \
+            --transfers 8 \
+            --fast-list \
+            --progress 2>&1 || echo "  Warning: failed to download .claude"
+    else
+        echo "  No data for .claude/"
+    fi
+    
+    # Download other sync paths to /workspace
     for path in "${SYNC_PATHS[@]}"; do
         if rclone --config /tmp/.config/rclone/rclone.conf lsf "${S3_PATH}/${path}/" 2>/dev/null | grep -q .; then
             echo "  Downloading ${path}/..."
@@ -111,7 +125,7 @@ fi
 
 # Set permissions on subdirectories (EmptyDir root may not be chmodable)
 echo "Setting permissions on subdirectories..."
-chmod -R 755 /workspace/.claude /workspace/artifacts /workspace/file-uploads /workspace/repos 2>/dev/null || true
+chmod -R 755 "${CLAUDE_DATA_PATH}" /workspace/artifacts /workspace/file-uploads /workspace/repos 2>/dev/null || true
 
 # ========================================
 # Clone repositories and workflows

@@ -227,12 +227,10 @@ async def run_agent(input_data: RunnerInput, request: Request):
         try:
             logger.info("Event generator started")
             
-            # Initialize adapter on first run (yields setup events)
+            # Initialize adapter on first run
             if not _adapter_initialized:
                 logger.info("First run - initializing adapter with workspace preparation")
-                async for event in adapter.initialize(context):
-                    logger.debug(f"Yielding initialization event: {event.type}")
-                    yield encoder.encode(event)
+                await adapter.initialize(context)
                 logger.info("Adapter initialization complete")
                 _adapter_initialized = True
             
@@ -288,6 +286,105 @@ async def interrupt_run():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def clone_workflow_at_runtime(git_url: str, branch: str, subpath: str) -> tuple[bool, str]:
+    """
+    Clone a workflow repository at runtime.
+    
+    This mirrors the logic in hydrate.sh but runs when workflows are changed
+    after the pod has started.
+    
+    Returns:
+        (success, workflow_dir_path) tuple
+    """
+    import tempfile
+    import shutil
+    from pathlib import Path
+    
+    if not git_url:
+        return False, ""
+    
+    # Derive workflow name from URL
+    workflow_name = git_url.split("/")[-1].removesuffix(".git")
+    workspace_path = os.getenv("WORKSPACE_PATH", "/workspace")
+    workflow_final = Path(workspace_path) / "workflows" / workflow_name
+    
+    logger.info(f"Cloning workflow '{workflow_name}' from {git_url}@{branch}")
+    if subpath:
+        logger.info(f"  Subpath: {subpath}")
+    
+    # Create temp directory for clone
+    temp_dir = Path(tempfile.mkdtemp(prefix="workflow-clone-"))
+    
+    try:
+        # Build git clone command with optional auth token
+        github_token = os.getenv("GITHUB_TOKEN", "").strip()
+        gitlab_token = os.getenv("GITLAB_TOKEN", "").strip()
+        
+        # Determine which token to use based on URL
+        clone_url = git_url
+        if github_token and "github" in git_url.lower():
+            clone_url = git_url.replace("https://", f"https://x-access-token:{github_token}@")
+            logger.info("Using GITHUB_TOKEN for workflow authentication")
+        elif gitlab_token and "gitlab" in git_url.lower():
+            clone_url = git_url.replace("https://", f"https://oauth2:{gitlab_token}@")
+            logger.info("Using GITLAB_TOKEN for workflow authentication")
+        
+        # Clone the repository
+        process = await asyncio.create_subprocess_exec(
+            "git", "clone", "--branch", branch, "--single-branch", "--depth", "1",
+            clone_url, str(temp_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            # Redact tokens from error message
+            error_msg = stderr.decode()
+            if github_token:
+                error_msg = error_msg.replace(github_token, "***REDACTED***")
+            if gitlab_token:
+                error_msg = error_msg.replace(gitlab_token, "***REDACTED***")
+            logger.error(f"Failed to clone workflow: {error_msg}")
+            return False, ""
+        
+        logger.info("Clone successful, processing...")
+        
+        # Handle subpath extraction
+        if subpath:
+            subpath_full = temp_dir / subpath
+            if subpath_full.exists() and subpath_full.is_dir():
+                logger.info(f"Extracting subpath: {subpath}")
+                # Remove existing workflow dir if exists
+                if workflow_final.exists():
+                    shutil.rmtree(workflow_final)
+                # Create parent dirs and copy subpath
+                workflow_final.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(subpath_full, workflow_final)
+                logger.info(f"Workflow extracted to {workflow_final}")
+            else:
+                logger.warning(f"Subpath '{subpath}' not found, using entire repo")
+                if workflow_final.exists():
+                    shutil.rmtree(workflow_final)
+                shutil.move(str(temp_dir), str(workflow_final))
+        else:
+            # No subpath - use entire repo
+            if workflow_final.exists():
+                shutil.rmtree(workflow_final)
+            shutil.move(str(temp_dir), str(workflow_final))
+        
+        logger.info(f"Workflow '{workflow_name}' ready at {workflow_final}")
+        return True, str(workflow_final)
+        
+    except Exception as e:
+        logger.error(f"Error cloning workflow: {e}")
+        return False, ""
+    finally:
+        # Cleanup temp directory if it still exists
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 @app.post("/workflow")
 async def change_workflow(request: Request):
     """
@@ -307,6 +404,13 @@ async def change_workflow(request: Request):
     
     logger.info(f"Workflow change request: {git_url}@{branch} (path: {path})")
     
+    # Clone the workflow repository at runtime
+    # This is needed because the init container only runs once at pod startup
+    if git_url:
+        success, workflow_path = await clone_workflow_at_runtime(git_url, branch, path)
+        if not success:
+            logger.warning("Failed to clone workflow, will use default workflow directory")
+    
     # Update environment variables
     os.environ["ACTIVE_WORKFLOW_GIT_URL"] = git_url
     os.environ["ACTIVE_WORKFLOW_BRANCH"] = branch
@@ -320,10 +424,104 @@ async def change_workflow(request: Request):
     
     # Trigger a new run to greet user with workflow context
     # This runs in background via backend POST
-    import asyncio
     asyncio.create_task(trigger_workflow_greeting(git_url, branch, path))
     
     return {"message": "Workflow updated", "gitUrl": git_url, "branch": branch, "path": path}
+
+
+async def clone_repo_at_runtime(git_url: str, branch: str, name: str) -> tuple[bool, str]:
+    """
+    Clone a repository at runtime.
+    
+    This mirrors the logic in hydrate.sh but runs when repos are added
+    after the pod has started.
+    
+    Args:
+        git_url: Git repository URL
+        branch: Branch to clone
+        name: Name for the cloned directory (derived from URL if empty)
+    
+    Returns:
+        (success, repo_dir_path) tuple
+    """
+    import tempfile
+    import shutil
+    from pathlib import Path
+    
+    if not git_url:
+        return False, ""
+    
+    # Derive repo name from URL if not provided
+    if not name:
+        name = git_url.split("/")[-1].removesuffix(".git")
+    
+    # Repos are stored in /workspace/repos/{name} (matching hydrate.sh)
+    workspace_path = os.getenv("WORKSPACE_PATH", "/workspace")
+    repos_dir = Path(workspace_path) / "repos"
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    repo_final = repos_dir / name
+    
+    logger.info(f"Cloning repo '{name}' from {git_url}@{branch}")
+    
+    # Skip if already cloned
+    if repo_final.exists():
+        logger.info(f"Repo '{name}' already exists at {repo_final}, skipping clone")
+        return True, str(repo_final)
+    
+    # Create temp directory for clone
+    temp_dir = Path(tempfile.mkdtemp(prefix="repo-clone-"))
+    
+    try:
+        # Build git clone command with optional auth token
+        github_token = os.getenv("GITHUB_TOKEN", "").strip()
+        gitlab_token = os.getenv("GITLAB_TOKEN", "").strip()
+        
+        # Determine which token to use based on URL
+        clone_url = git_url
+        if github_token and "github" in git_url.lower():
+            # Add GitHub token to URL
+            clone_url = git_url.replace("https://", f"https://x-access-token:{github_token}@")
+            logger.info("Using GITHUB_TOKEN for authentication")
+        elif gitlab_token and "gitlab" in git_url.lower():
+            # Add GitLab token to URL
+            clone_url = git_url.replace("https://", f"https://oauth2:{gitlab_token}@")
+            logger.info("Using GITLAB_TOKEN for authentication")
+        
+        # Clone the repository
+        process = await asyncio.create_subprocess_exec(
+            "git", "clone", "--branch", branch, "--single-branch", "--depth", "1",
+            clone_url, str(temp_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            # Redact tokens from error message
+            error_msg = stderr.decode()
+            if github_token:
+                error_msg = error_msg.replace(github_token, "***REDACTED***")
+            if gitlab_token:
+                error_msg = error_msg.replace(gitlab_token, "***REDACTED***")
+            logger.error(f"Failed to clone repo: {error_msg}")
+            return False, ""
+        
+        logger.info("Clone successful, moving to final location...")
+        
+        # Move to final location
+        repo_final.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(temp_dir), str(repo_final))
+        
+        logger.info(f"Repo '{name}' ready at {repo_final}")
+        return True, str(repo_final)
+        
+    except Exception as e:
+        logger.error(f"Error cloning repo: {e}")
+        return False, ""
+    finally:
+        # Cleanup temp directory if it still exists
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def trigger_workflow_greeting(git_url: str, branch: str, path: str):
@@ -390,7 +588,7 @@ async def trigger_workflow_greeting(git_url: str, branch: str, path: str):
 @app.post("/repos/add")
 async def add_repo(request: Request):
     """
-    Add repository - triggers Claude SDK client restart.
+    Add repository - clones repo and triggers Claude SDK client restart.
     
     Accepts: {"url": "...", "branch": "...", "name": "..."}
     """
@@ -400,7 +598,23 @@ async def add_repo(request: Request):
         raise HTTPException(status_code=503, detail="Adapter not initialized")
     
     body = await request.json()
-    logger.info(f"Add repo request: {body}")
+    url = body.get("url", "")
+    branch = body.get("branch", "main")
+    name = body.get("name", "")
+    
+    logger.info(f"Add repo request: url={url}, branch={branch}, name={name}")
+    
+    if not url:
+        raise HTTPException(status_code=400, detail="Repository URL is required")
+    
+    # Derive name from URL if not provided
+    if not name:
+        name = url.split("/")[-1].removesuffix(".git")
+    
+    # Clone the repository at runtime
+    success, repo_path = await clone_repo_at_runtime(url, branch, name)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to clone repository: {url}")
     
     # Update REPOS_JSON env var
     repos_json = os.getenv("REPOS_JSON", "[]")
@@ -411,22 +625,81 @@ async def add_repo(request: Request):
     
     # Add new repo
     repos.append({
-        "name": body.get("name", ""),
+        "name": name,
         "input": {
-            "url": body.get("url", ""),
-            "branch": body.get("branch", "main")
+            "url": url,
+            "branch": branch
         }
     })
     
     os.environ["REPOS_JSON"] = json.dumps(repos)
     
-    # Reset adapter state
+    # Reset adapter state to force reinitialization on next run
     _adapter_initialized = False
     adapter._first_run = True
     
-    logger.info(f"Repo added, adapter will reinitialize on next run")
+    logger.info(f"Repo '{name}' added and cloned, adapter will reinitialize on next run")
     
-    return {"message": "Repository added"}
+    # Trigger a notification to Claude about the new repository
+    asyncio.create_task(trigger_repo_added_notification(name, url))
+    
+    return {"message": "Repository added", "name": name, "path": repo_path}
+
+
+async def trigger_repo_added_notification(repo_name: str, repo_url: str):
+    """Notify Claude that a repository has been added."""
+    import uuid
+    import aiohttp
+    
+    # Wait a moment for repo to be fully ready
+    await asyncio.sleep(1)
+    
+    logger.info(f"Triggering repo added notification for: {repo_name}")
+    
+    try:
+        backend_url = os.getenv("BACKEND_API_URL", "").rstrip("/")
+        project_name = os.getenv("AGENTIC_SESSION_NAMESPACE", "").strip()
+        session_id = context.session_id if context else "unknown"
+        
+        if not backend_url or not project_name:
+            logger.error("Cannot trigger repo notification: BACKEND_API_URL or PROJECT_NAME not set")
+            return
+        
+        url = f"{backend_url}/projects/{project_name}/agentic-sessions/{session_id}/agui/run"
+        
+        notification = f"The repository '{repo_name}' has been added to your workspace. You can now access it at the path 'repos/{repo_name}/'. Please acknowledge this to the user and let them know you can now read and work with files in this repository."
+        
+        payload = {
+            "threadId": session_id,
+            "runId": str(uuid.uuid4()),
+            "messages": [{
+                "id": str(uuid.uuid4()),
+                "role": "user",
+                "content": notification,
+                "metadata": {
+                    "hidden": True,
+                    "autoSent": True,
+                    "source": "repo_added"
+                }
+            }]
+        }
+        
+        bot_token = os.getenv("BOT_TOKEN", "").strip()
+        headers = {"Content-Type": "application/json"}
+        if bot_token:
+            headers["Authorization"] = f"Bearer {bot_token}"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    logger.info(f"Repo notification sent: {result}")
+                else:
+                    error_text = await resp.text()
+                    logger.error(f"Repo notification failed: {resp.status} - {error_text}")
+    
+    except Exception as e:
+        logger.error(f"Failed to trigger repo notification: {e}")
 
 
 @app.post("/repos/remove")

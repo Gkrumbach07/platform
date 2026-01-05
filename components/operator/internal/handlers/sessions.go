@@ -30,72 +30,14 @@ import (
 )
 
 // Track which pods are currently being monitored to prevent duplicate goroutines
+// NOTE: This is used by the legacy handleAgenticSessionEvent function which is
+// kept for reference but no longer actively called by the operator.
+// The controller-runtime based reconciler in internal/controller/ handles all
+// AgenticSession reconciliation now.
 var (
 	monitoredPods   = make(map[string]bool)
 	monitoredPodsMu sync.Mutex
 )
-
-// WatchAgenticSessions watches for AgenticSession custom resources and creates pods
-func WatchAgenticSessions() {
-	gvr := types.GetAgenticSessionResource()
-
-	for {
-		// Watch AgenticSessions across all namespaces
-		watcher, err := config.DynamicClient.Resource(gvr).Watch(context.TODO(), v1.ListOptions{})
-		if err != nil {
-			log.Printf("Failed to create AgenticSession watcher: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		log.Println("Watching for AgenticSession events across all namespaces...")
-
-		for event := range watcher.ResultChan() {
-			switch event.Type {
-			case watch.Added, watch.Modified:
-				obj := event.Object.(*unstructured.Unstructured)
-
-				// Only process resources in managed namespaces
-				ns := obj.GetNamespace()
-				if ns == "" {
-					continue
-				}
-				nsObj, err := config.K8sClient.CoreV1().Namespaces().Get(context.TODO(), ns, v1.GetOptions{})
-				if err != nil {
-					log.Printf("Failed to get namespace %s: %v", ns, err)
-					continue
-				}
-				if nsObj.Labels["ambient-code.io/managed"] != "true" {
-					// Skip unmanaged namespaces
-					continue
-				}
-
-				// Add small delay to avoid race conditions with rapid create/delete cycles
-				time.Sleep(100 * time.Millisecond)
-
-				if err := handleAgenticSessionEvent(obj); err != nil {
-					log.Printf("Error handling AgenticSession event: %v", err)
-				}
-			case watch.Deleted:
-				obj := event.Object.(*unstructured.Unstructured)
-				sessionName := obj.GetName()
-				sessionNamespace := obj.GetNamespace()
-				log.Printf("AgenticSession %s/%s deleted", sessionNamespace, sessionName)
-
-				// Cancel any ongoing job monitoring for this session
-				// (We could implement this with a context cancellation if needed)
-				// OwnerReferences handle cleanup of per-session resources
-			case watch.Error:
-				obj := event.Object.(*unstructured.Unstructured)
-				log.Printf("Watch error for AgenticSession: %v", obj)
-			}
-		}
-
-		log.Println("AgenticSession watch channel closed, restarting...")
-		watcher.Stop()
-		time.Sleep(2 * time.Second)
-	}
-}
 
 func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	name := obj.GetName()
@@ -917,6 +859,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					}(),
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "workspace", MountPath: "/workspace"},
+						// SubPath mount for .claude so init container writes to same location as runner
+						{Name: "workspace", MountPath: "/app/.claude", SubPath: ".claude"},
 					},
 				},
 			},
@@ -1235,6 +1179,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					},
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "workspace", MountPath: "/workspace", ReadOnly: false},
+						// SubPath mount for .claude so sync sidecar reads from same location as runner
+						{Name: "workspace", MountPath: "/app/.claude", SubPath: ".claude", ReadOnly: false},
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{

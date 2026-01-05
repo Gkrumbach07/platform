@@ -359,13 +359,15 @@ export default function ProjectSessionDetailPage({
 
       if (data.name && data.inputRepo) {
         try {
+          // Repos are cloned to /workspace/repos/{name}
+          const repoPath = `repos/${data.name}`;
           await fetch(
             `/api/projects/${projectName}/agentic-sessions/${sessionName}/git/configure-remote`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                path: data.name,
+                path: repoPath,
                 remoteUrl: data.inputRepo.url,
                 branch: data.inputRepo.branch || "main",
               }),
@@ -373,7 +375,7 @@ export default function ProjectSessionDetailPage({
           );
 
           const newRemotes = { ...directoryRemotes };
-          newRemotes[data.name] = {
+          newRemotes[repoPath] = {
             url: data.inputRepo.url,
             branch: data.inputRepo.branch || "main",
           };
@@ -1382,36 +1384,39 @@ export default function ProjectSessionDetailPage({
           </div>
         </div>
 
-        {/* Mobile: Options menu button (below header border) */}
-        <div className="md:hidden px-6 py-1 bg-card border-b">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="h-8 w-8 p-0"
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-          </Button>
-        </div>
+        {/* Mobile: Options menu button (below header border) - only show when session is running */}
+        {session?.status?.phase === "Running" && (
+          <div className="md:hidden px-6 py-1 bg-card border-b">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="h-8 w-8 p-0"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Main content area */}
         <div className="flex-grow overflow-hidden bg-card">
           <div className="h-full">
             <div className="h-full flex gap-6">
-              {/* Mobile sidebar overlay */}
-              {mobileMenuOpen && (
+              {/* Mobile sidebar overlay - only show when session is running */}
+              {session?.status?.phase === "Running" && mobileMenuOpen && (
                 <div 
                   className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40 md:hidden"
                   onClick={() => setMobileMenuOpen(false)}
                 />
               )}
 
-              {/* Left Column - Accordions */}
-              <div className={cn(
-                "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] overflow-y-auto pt-6 pl-6 pr-6 bg-card",
-                "md:flex md:pr-0",
-                mobileMenuOpen ? "fixed left-0 top-16 z-50 shadow-lg" : "hidden"
-              )}>
+              {/* Left Column - Accordions - only show when session is running */}
+              {session?.status?.phase === "Running" && (
+                <div className={cn(
+                  "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] overflow-y-auto pt-6 pl-6 pr-6 bg-card",
+                  "md:flex md:pr-0",
+                  mobileMenuOpen ? "fixed left-0 top-16 z-50 shadow-lg" : "hidden"
+                )}>
                 {/* Mobile close button */}
                 <div className="md:hidden flex justify-end mb-4">
                   <Button
@@ -1862,6 +1867,7 @@ export default function ProjectSessionDetailPage({
                   </Accordion>
                 </div>
               </div>
+              )}
 
               {/* Right Column - Messages */}
               <div className="flex-1 min-w-0 flex flex-col">

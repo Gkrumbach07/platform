@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1276,6 +1277,52 @@ func AddRepo(c *gin.Context) {
 		return
 	}
 
+	// Derive repo name from URL
+	repoName := req.URL
+	if idx := strings.LastIndex(req.URL, "/"); idx != -1 {
+		repoName = req.URL[idx+1:]
+	}
+	repoName = strings.TrimSuffix(repoName, ".git")
+
+	// Call runner to clone the repository (if session is running)
+	status, _ := item.Object["status"].(map[string]interface{})
+	phase, _ := status["phase"].(string)
+	if phase == "Running" {
+		runnerURL := fmt.Sprintf("http://session-%s.%s.svc.cluster.local:8001/repos/add", sessionName, project)
+		runnerReq := map[string]string{
+			"url":    req.URL,
+			"branch": req.Branch,
+			"name":   repoName,
+		}
+		reqBody, _ := json.Marshal(runnerReq)
+
+		log.Printf("Calling runner to clone repo: %s -> %s", req.URL, runnerURL)
+		httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", runnerURL, bytes.NewReader(reqBody))
+		if err != nil {
+			log.Printf("Failed to create runner request: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create runner request"})
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 120 * time.Second} // Allow time for clone
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			log.Printf("Failed to call runner to clone repo: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clone repository (runner not reachable)"})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("Runner failed to clone repo (status %d): %s", resp.StatusCode, string(body))
+			c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Failed to clone repository: %s", string(body))})
+			return
+		}
+		log.Printf("Runner successfully cloned repo %s for session %s", repoName, sessionName)
+	}
+
 	// Update spec.repos
 	spec, ok := item.Object["spec"].(map[string]interface{})
 	if !ok {
@@ -1315,7 +1362,7 @@ func AddRepo(c *gin.Context) {
 	}
 
 	log.Printf("Added repository %s to session %s in project %s", req.URL, sessionName, project)
-	c.JSON(http.StatusOK, gin.H{"message": "Repository added", "session": session})
+	c.JSON(http.StatusOK, gin.H{"message": "Repository added", "name": repoName, "session": session})
 }
 
 // RemoveRepo removes a repository from a running session
@@ -1417,6 +1464,14 @@ func GetWorkflowMetadata(c *gin.Context) {
 	if project == "" {
 		log.Printf("GetWorkflowMetadata: project is empty, session=%s", sessionName)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Project namespace required"})
+		return
+	}
+
+	// Validate user authentication and authorization
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		c.Abort()
 		return
 	}
 
@@ -2209,6 +2264,14 @@ func ListSessionWorkspace(c *gin.Context) {
 		return
 	}
 
+	// Validate user authentication and authorization
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		c.Abort()
+		return
+	}
+
 	rel := strings.TrimSpace(c.Query("path"))
 	// Path is relative to content service's StateBaseDir (which is /workspace)
 	// Content service handles the base path, so we just pass the relative path
@@ -2282,6 +2345,14 @@ func GetSessionWorkspaceFile(c *gin.Context) {
 	if project == "" {
 		log.Printf("GetSessionWorkspaceFile: project is empty, session=%s", session)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Project namespace required"})
+		return
+	}
+
+	// Validate user authentication and authorization
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		c.Abort()
 		return
 	}
 

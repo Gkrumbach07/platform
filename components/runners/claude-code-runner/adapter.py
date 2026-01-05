@@ -790,11 +790,12 @@ class ClaudeCodeAdapter:
             logger.warning(f"Failed to derive workflow name: {e}, using default")
             cwd_path = str(Path(self.context.workspace_path) / "workflows" / "default")
 
-        # Add all repos as additional directories
+        # Add all repos as additional directories (repos are in /workspace/repos/{name})
+        repos_base = Path(self.context.workspace_path) / "repos"
         for r in repos_cfg:
             name = (r.get('name') or '').strip()
             if name:
-                repo_path = str(Path(self.context.workspace_path) / name)
+                repo_path = str(repos_base / name)
                 if repo_path not in add_dirs:
                     add_dirs.append(repo_path)
 
@@ -810,8 +811,14 @@ class ClaudeCodeAdapter:
         return cwd_path, add_dirs, derived_name
 
     def _setup_multi_repo_paths(self, repos_cfg: list) -> tuple[str, list]:
-        """Setup paths for multi-repo mode."""
+        """Setup paths for multi-repo mode.
+        
+        Repos are cloned to /workspace/repos/{name} by both:
+        - hydrate.sh (init container)
+        - clone_repo_at_runtime() (runtime addition)
+        """
         add_dirs = []
+        repos_base = Path(self.context.workspace_path) / "repos"
         
         main_name = (os.getenv('MAIN_REPO_NAME') or '').strip()
         if not main_name:
@@ -824,13 +831,15 @@ class ClaudeCodeAdapter:
                 idx_val = 0
             main_name = (repos_cfg[idx_val].get('name') or '').strip()
 
-        cwd_path = str(Path(self.context.workspace_path) / main_name) if main_name else self.context.workspace_path
+        # Main repo path is /workspace/repos/{name}
+        cwd_path = str(repos_base / main_name) if main_name else self.context.workspace_path
 
         for r in repos_cfg:
             name = (r.get('name') or '').strip()
             if not name:
                 continue
-            p = str(Path(self.context.workspace_path) / name)
+            # All repos are in /workspace/repos/{name}
+            p = str(repos_base / name)
             if p != cwd_path:
                 add_dirs.append(p)
 
@@ -1273,9 +1282,10 @@ class ClaudeCodeAdapter:
 
         if repos_cfg:
             prompt += "## Available Code Repositories\n"
+            prompt += "Location: repos/\n"
             for i, repo in enumerate(repos_cfg):
                 name = repo.get('name', f'repo-{i}')
-                prompt += f"- {name}/\n"
+                prompt += f"- repos/{name}/\n"
             prompt += "\nThese repositories contain source code you can read or modify.\n\n"
 
         if ambient_config.get("systemPrompt"):

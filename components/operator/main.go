@@ -44,7 +44,6 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var maxConcurrentReconciles int
-	var useLegacyWatch bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -53,8 +52,6 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 10,
 		"Maximum number of concurrent Reconciles which can be run. Higher values allow more throughput but consume more resources.")
-	flag.BoolVar(&useLegacyWatch, "legacy-watch", false,
-		"Use legacy watch-based implementation instead of controller-runtime (for debugging only).")
 	flag.Parse()
 
 	// Allow environment variable override for max concurrent reconciles
@@ -77,10 +74,9 @@ func main() {
 	logger.Info("Starting Agentic Session Operator",
 		"maxConcurrentReconciles", maxConcurrentReconciles,
 		"leaderElection", enableLeaderElection,
-		"legacyWatch", useLegacyWatch,
 	)
 
-	// Initialize Kubernetes clients (needed for legacy handlers and config)
+	// Initialize Kubernetes clients (needed for namespace/projectsettings handlers and config)
 	if err := config.InitK8sClients(); err != nil {
 		logger.Error(err, "Failed to initialize Kubernetes clients")
 		os.Exit(1)
@@ -109,13 +105,6 @@ func main() {
 			logger.Error(err, "Vertex AI validation failed")
 			os.Exit(1)
 		}
-	}
-
-	// If legacy watch mode is requested, use the old implementation
-	if useLegacyWatch {
-		logger.Info("Using legacy watch-based implementation")
-		runLegacyMode()
-		return
 	}
 
 	// Create controller-runtime manager with increased QPS/Burst to avoid client-side throttling
@@ -173,24 +162,6 @@ func main() {
 		logger.Error(err, "Problem running manager")
 		os.Exit(1)
 	}
-}
-
-// runLegacyMode runs the operator using the old watch-based implementation.
-// This is kept for backward compatibility and debugging.
-func runLegacyMode() {
-	log.Println("=== LEGACY MODE: Using watch-based implementation ===")
-
-	// Start watching AgenticSession resources (legacy)
-	go handlers.WatchAgenticSessions()
-
-	// Start watching for managed namespaces
-	go handlers.WatchNamespaces()
-
-	// Start watching ProjectSettings resources
-	go handlers.WatchProjectSettings()
-
-	// Keep the operator running
-	select {}
 }
 
 func logBuildInfo() {

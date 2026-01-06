@@ -1735,7 +1735,14 @@ func ListOOTBWorkflows(c *gin.Context) {
 			return
 		}
 		ootbCache.mu.RUnlock()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to discover OOTB workflows"})
+		// Include more context in error message for debugging
+		errMsg := "Failed to discover OOTB workflows"
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "rate limit") {
+			errMsg = "Failed to discover OOTB workflows: GitHub rate limit exceeded. Try again later or configure a GitHub token in project settings."
+		} else if strings.Contains(err.Error(), "404") {
+			errMsg = "Failed to discover OOTB workflows: Repository or path not found"
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
 

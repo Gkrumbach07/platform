@@ -511,17 +511,12 @@ func ContentWorkflowMetadata(c *gin.Context) {
 					displayName = commandName
 				}
 
-				// Extract short command (last segment after final dot)
-				shortCommand := commandName
-				if lastDot := strings.LastIndex(commandName, "."); lastDot != -1 {
-					shortCommand = commandName[lastDot+1:]
-				}
-
+				// Use full command name as slash command (e.g., /speckit.rfe.start)
 				commands = append(commands, map[string]interface{}{
 					"id":           commandName,
 					"name":         displayName,
 					"description":  metadata["description"],
-					"slashCommand": "/" + shortCommand,
+					"slashCommand": "/" + commandName,
 					"icon":         metadata["icon"],
 				})
 			}
@@ -648,9 +643,9 @@ func parseAmbientConfig(workflowDir string) *AmbientConfig {
 
 // findActiveWorkflowDir finds the active workflow directory for a session
 func findActiveWorkflowDir(sessionName string) string {
-	// Workflows are stored at {StateBaseDir}/sessions/{session-name}/workspace/workflows/{workflow-name}
-	// The runner creates this nested structure
-	workflowsBase := filepath.Join(StateBaseDir, "sessions", sessionName, "workspace", "workflows")
+	// Workflows are stored at {StateBaseDir}/workflows/{workflow-name}
+	// The runner clones workflows to /workspace/workflows/ at runtime
+	workflowsBase := filepath.Join(StateBaseDir, "workflows")
 
 	entries, err := os.ReadDir(workflowsBase)
 	if err != nil {

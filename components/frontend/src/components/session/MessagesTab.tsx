@@ -492,9 +492,6 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ session, streamMessages, chat
                         );
                       } else {
                         const cmd = item as { id: string; name: string; slashCommand: string; description?: string };
-                        const commandTitle = cmd.name.includes('.') 
-                          ? cmd.name.split('.').pop() 
-                          : cmd.name;
                         
                         return (
                           <div
@@ -508,8 +505,8 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ session, streamMessages, chat
                             onMouseEnter={() => setAutocompleteSelectedIndex(index)}
                           >
                             <div className="font-medium text-sm">{cmd.slashCommand}</div>
-                            <div className="text-xs text-muted-foreground truncate capitalize">
-                              {commandTitle}
+                            <div className="text-xs text-muted-foreground truncate">
+                              {cmd.name}
                             </div>
                           </div>
                         );
@@ -636,18 +633,14 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ session, streamMessages, chat
                             className="max-h-[400px] overflow-y-scroll space-y-2 pr-2 scrollbar-thin"
                           >
                             {workflowMetadata.commands.map((cmd) => {
-                              const commandTitle = cmd.name.includes('.') 
-                                ? cmd.name.split('.').pop() 
-                                : cmd.name;
-                              
                               return (
                                 <div
                                   key={cmd.id}
                                   className="p-3 rounded-md border bg-muted/30"
                                 >
                                   <div className="flex items-center justify-between mb-1">
-                                    <h3 className="text-sm font-bold capitalize">
-                                      {commandTitle}
+                                    <h3 className="text-sm font-bold">
+                                      {cmd.name}
                                     </h3>
                                     <Button
                                       variant="outline"
@@ -660,7 +653,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ session, streamMessages, chat
                                         }
                                       }}
                                     >
-                                      Run {cmd.slashCommand.replace(/^\/speckit\./, '/')}
+                                      Run {cmd.slashCommand}
                                     </Button>
                                   </div>
                                   {cmd.description && (

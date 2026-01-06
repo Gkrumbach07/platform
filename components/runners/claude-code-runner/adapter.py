@@ -400,7 +400,21 @@ class ClaudeCodeAdapter:
 
             # Load MCP server configuration
             mcp_servers = self._load_mcp_config(cwd_path)
-            allowed_tools = ["Read", "Write", "Bash", "Glob", "Grep", "Edit", "MultiEdit", "WebSearch", "WebFetch"]
+            
+            # Add WebFetch.MCP as default if no MCP config exists
+            if not mcp_servers:
+                mcp_servers = {}
+            
+            # Always include WebFetch.MCP for better web content extraction
+            if "webfetch" not in mcp_servers:
+                mcp_servers["webfetch"] = {
+                    "command": "npx",
+                    "args": ["-y", "@manooll/webfetch-mcp"]
+                }
+                logger.info("Added WebFetch.MCP as default web fetch provider")
+            
+            # Disable built-in WebFetch in favor of WebFetch.MCP
+            allowed_tools = ["Read", "Write", "Bash", "Glob", "Grep", "Edit", "MultiEdit", "WebSearch"]
             if mcp_servers:
                 for server_name in mcp_servers.keys():
                     allowed_tools.append(f"mcp__{server_name}")
@@ -1251,48 +1265,43 @@ class ClaudeCodeAdapter:
             return {}
 
     def _build_workspace_context_prompt(self, repos_cfg, workflow_name, artifacts_path, ambient_config):
-        """Generate comprehensive system prompt describing workspace layout."""
-        prompt = "You are Claude Code working in a structured development workspace.\n\n"
+        """Generate concise system prompt describing workspace layout."""
+        prompt = "# Workspace Structure\n\n"
 
+        # Workflow directory (if active)
         if workflow_name:
-            prompt += "## Current Workflow\n"
-            prompt += f"Working directory: workflows/{workflow_name}/\n"
-            prompt += "This directory contains workflow logic and automation scripts.\n\n"
+            prompt += f"**Working Directory**: workflows/{workflow_name}/ (workflow logic - do not create files here)\n\n"
 
-        prompt += "## User-Uploaded Files (IMPORTANT)\n"
-        prompt += "Location: file-uploads/\n"
-        prompt += "Purpose: User-uploaded context files (screenshots, documents, images, PDFs, specs, designs).\n"
-        prompt += "ALWAYS check this directory when starting a new task - it often contains critical context.\n\n"
+        # Artifacts
+        prompt += f"**Artifacts**: {artifacts_path} (create all output files here)\n\n"
 
+        # Uploaded files
         file_uploads_path = Path(self.context.workspace_path) / "file-uploads"
         if file_uploads_path.exists() and file_uploads_path.is_dir():
             try:
                 files = sorted([f.name for f in file_uploads_path.iterdir() if f.is_file()])
                 if files:
-                    prompt += f"Currently uploaded files ({len(files)}):\n"
-                    for filename in files:
-                        prompt += f"  - {filename}\n"
-                    prompt += "READ THESE FILES if they're relevant to the user's task!\n"
+                    max_display = 10
+                    if len(files) <= max_display:
+                        prompt += f"**Uploaded Files**: {', '.join(files)}\n\n"
+                    else:
+                        prompt += f"**Uploaded Files** ({len(files)} total): {', '.join(files[:max_display])}, and {len(files) - max_display} more\n\n"
             except Exception:
                 pass
+        else:
+            prompt += "**Uploaded Files**: None\n\n"
 
-        prompt += "\n## Shared Artifacts Directory\n"
-        prompt += f"Location: {artifacts_path}\n"
-        prompt += "Purpose: Create all output artifacts (documents, specs, reports) here.\n\n"
-
+        # Repositories
         if repos_cfg:
-            prompt += "## Available Code Repositories\n"
-            prompt += "Location: repos/\n"
-            for i, repo in enumerate(repos_cfg):
-                name = repo.get('name', f'repo-{i}')
-                prompt += f"- repos/{name}/\n"
-            prompt += "\nThese repositories contain source code you can read or modify.\n\n"
+            repo_names = [repo.get('name', f'repo-{i}') for i, repo in enumerate(repos_cfg)]
+            if len(repo_names) <= 5:
+                prompt += f"**Repositories**: {', '.join([f'repos/{name}/' for name in repo_names])}\n\n"
+            else:
+                prompt += f"**Repositories** ({len(repo_names)} total): {', '.join([f'repos/{name}/' for name in repo_names[:5]])}, and {len(repo_names) - 5} more\n\n"
 
+        # Workflow instructions (if any)
         if ambient_config.get("systemPrompt"):
             prompt += f"## Workflow Instructions\n{ambient_config['systemPrompt']}\n\n"
-
-        prompt += "## Navigation\n"
-        prompt += "All directories are accessible via relative or absolute paths.\n"
 
         return prompt
 

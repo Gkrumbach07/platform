@@ -281,7 +281,6 @@ func (r *AgenticSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return nil
 }
 
-
 // GetGVR returns the GroupVersionResource for AgenticSession
 func GetGVR() schema.GroupVersionResource {
 	return optypes.GetAgenticSessionResource()

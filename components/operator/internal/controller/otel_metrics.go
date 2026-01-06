@@ -38,11 +38,11 @@ var (
 	sessionsByProject       metric.Int64Counter
 
 	// Error metrics (counters)
-	reconcileRetries     metric.Int64Counter
-	sessionTimeouts      metric.Int64Counter
-	s3Errors             metric.Int64Counter
-	tokenRefreshErrors   metric.Int64Counter
-	podRestarts          metric.Int64Counter
+	reconcileRetries   metric.Int64Counter
+	sessionTimeouts    metric.Int64Counter
+	s3Errors           metric.Int64Counter
+	tokenRefreshErrors metric.Int64Counter
+	podRestarts        metric.Int64Counter
 )
 
 // InitMetrics initializes OpenTelemetry metrics

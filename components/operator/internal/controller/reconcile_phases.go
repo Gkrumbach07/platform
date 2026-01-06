@@ -91,11 +91,11 @@ func recordImagePullDuration(namespace string, pod *corev1.Pod) {
 
 	// Check all containers for image pull timing
 	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Running != nil && cs.State.Running.StartedAt.Time.After(podCreated) {
+		if cs.State.Running != nil && cs.State.Running.StartedAt.After(podCreated) {
 			// Approximate image pull duration as time from pod creation to container start
 			// This includes scheduling + image pull + container creation
-			duration := cs.State.Running.StartedAt.Time.Sub(podCreated).Seconds()
-			
+			duration := cs.State.Running.StartedAt.Sub(podCreated).Seconds()
+
 			// Extract image name (remove tag/digest for cleaner metrics)
 			image := cs.Image
 			if idx := strings.Index(image, "@"); idx != -1 {
@@ -103,9 +103,9 @@ func recordImagePullDuration(namespace string, pod *corev1.Pod) {
 			} else if idx := strings.LastIndex(image, ":"); idx != -1 {
 				image = image[:idx]
 			}
-			
+
 			RecordImagePullDuration(namespace, image, duration)
-			
+
 			// Log for first container only (usually the runner)
 			log.Log.Info("Image pull completed",
 				"namespace", namespace,
@@ -146,7 +146,6 @@ func recordStartupTime(namespace, sessionName string, session *unstructured.Unst
 		"startup_duration_seconds", fmt.Sprintf("%.2f", duration),
 	)
 }
-
 
 // reconcilePending handles sessions in Pending phase.
 // This creates the runner pod and transitions to Creating phase.
@@ -379,4 +378,3 @@ func (r *AgenticSessionReconciler) reconcileStopping(ctx context.Context, sessio
 	// Requeue to check again
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
-

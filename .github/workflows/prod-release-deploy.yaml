@@ -12,6 +12,16 @@ on:
           - major
           - minor
           - patch
+      force_build_all:
+        description: 'Force rebuild all components'
+        required: false
+        type: boolean
+        default: true
+      components:
+        description: 'Components to build (comma-separated: frontend,backend,operator,claude-runner,state-sync) - leave empty for all'
+        required: false
+        type: string
+        default: ''
 jobs:
    release:
     runs-on: ubuntu-latest
@@ -190,6 +200,7 @@ jobs:
           password: ${{ secrets.REDHAT_PASSWORD }}
 
       - name: Build and push ${{ matrix.component.name }} image
+        if: github.event.inputs.force_build_all == 'true' || contains(github.event.inputs.components, matrix.component.name) || (github.event.inputs.components == '' && github.event.inputs.force_build_all != 'false')
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.component.context }}

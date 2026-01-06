@@ -1,6 +1,6 @@
 FROM alpine:3.19
 
-# Install rclone, git, and utilities
+# Install rclone, git, and utilities for S3 state synchronization
 RUN apk add --no-cache \
     rclone \
     git \

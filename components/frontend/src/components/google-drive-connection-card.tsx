@@ -5,39 +5,64 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Loader2 } from 'lucide-react'
 import { successToast, errorToast } from '@/hooks/use-toast'
+import { useGoogleStatus, useDisconnectGoogle } from '@/services/queries/use-google'
+import * as googleAuthApi from '@/services/api/google-auth'
 
 type Props = {
   showManageButton?: boolean
 }
 
 export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
-  const [googleConnected, setGoogleConnected] = useState(false)
+  const { data: status, isLoading, refetch } = useGoogleStatus()
+  const disconnectMutation = useDisconnectGoogle()
   const [connecting, setConnecting] = useState(false)
-  const [isLoading] = useState(false)
 
   const handleConnect = async () => {
     setConnecting(true)
 
     try {
-      // Note: This will need to be updated to use a project-level OAuth flow
-      // Currently MCP integrations are per-session, but should be project-level
-      errorToast('Google Drive integration setup coming soon. Currently available per-session.')
-      setConnecting(false)
+      // Get OAuth URL from backend
+      const response = await googleAuthApi.getGoogleOAuthURL()
+      const authUrl = response.url
+
+      // Open OAuth flow in popup window
+      const width = 600
+      const height = 700
+      const left = window.screen.width / 2 - width / 2
+      const top = window.screen.height / 2 - height / 2
+
+      const popup = window.open(
+        authUrl,
+        'Google OAuth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      )
+
+      // Poll for popup close and check status
+      const pollTimer = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(pollTimer)
+          setConnecting(false)
+          // Refetch status to check if OAuth succeeded
+          refetch()
+        }
+      }, 500)
     } catch (err) {
       console.error('Failed to initiate Google OAuth:', err)
-      errorToast('Failed to connect Google Drive')
+      errorToast(err instanceof Error ? err.message : 'Failed to connect Google Drive')
       setConnecting(false)
     }
   }
 
   const handleDisconnect = async () => {
-    try {
-      // TODO: Implement disconnect - remove credentials
-      setGoogleConnected(false)
-      successToast('Google Drive disconnected successfully')
-    } catch {
-      errorToast('Failed to disconnect Google Drive')
-    }
+    disconnectMutation.mutate(undefined, {
+      onSuccess: () => {
+        successToast('Google Drive disconnected successfully')
+        refetch()
+      },
+      onError: (error) => {
+        errorToast(error instanceof Error ? error.message : 'Failed to disconnect Google Drive')
+      },
+    })
   }
 
   const handleManage = () => {
@@ -78,25 +103,29 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
         {/* Status section */}
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-2">
-            <span className={`w-2 h-2 rounded-full ${googleConnected ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+            <span className={`w-2 h-2 rounded-full ${status?.connected ? 'bg-green-500' : 'bg-gray-400'}`}></span>
             <span className="text-sm font-medium text-foreground/80">
-              {googleConnected ? 'Connected' : 'Not Connected'}
+              {status?.connected ? (
+                <>Connected{status.email ? ` as ${status.email}` : ''}</>
+              ) : (
+                'Not Connected'
+              )}
             </span>
           </div>
           <p className="text-muted-foreground">
-            Connect to Google Drive to access files in your sessions via MCP
+            Connect to Google Drive to access files in all your sessions via MCP
           </p>
         </div>
 
         {/* Action buttons */}
         <div className="flex gap-3">
-          {googleConnected ? (
+          {status?.connected ? (
             <>
               {showManageButton && (
                 <Button 
                   variant="outline" 
                   onClick={handleManage} 
-                  disabled={isLoading}
+                  disabled={isLoading || disconnectMutation.isPending}
                 >
                   Manage Permissions
                 </Button>
@@ -104,9 +133,16 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
               <Button 
                 variant="destructive" 
                 onClick={handleDisconnect} 
-                disabled={isLoading}
+                disabled={isLoading || disconnectMutation.isPending}
               >
-                Disconnect
+                {disconnectMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Disconnecting...
+                  </>
+                ) : (
+                  'Disconnect'
+                )}
               </Button>
             </>
           ) : (

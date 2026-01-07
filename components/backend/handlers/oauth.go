@@ -298,7 +298,35 @@ func HandleOAuth2Callback(c *gin.Context) {
 	callbackData.ExpiresIn = tokenData.ExpiresIn
 	callbackData.TokenType = tokenData.TokenType
 
-	// Parse and validate session context from signed state parameter
+	// Try to parse state as new format (map) or legacy format (OAuthStateData struct)
+	// New cluster-level OAuth uses map with "cluster":true flag
+	var stateMap map[string]interface{}
+	stateBytes, err := base64.URLEncoding.DecodeString(strings.Split(state, ".")[0])
+	if err == nil {
+		if jsonErr := json.Unmarshal(stateBytes, &stateMap); jsonErr == nil {
+			// Check if this is cluster-level OAuth
+			if isCluster, ok := stateMap["cluster"].(bool); ok && isCluster {
+				log.Printf("Detected cluster-level OAuth flow")
+				
+				// Handle cluster-level Google OAuth
+				if err := HandleGoogleOAuthCallback(c.Request.Context(), code, stateMap); err != nil {
+					log.Printf("Cluster-level OAuth failed: %v", err)
+					c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+						"<html><body><h1>Authorization Error</h1><p>Provider: "+provider+"</p><p><strong>Error:</strong> "+err.Error()+"</p><p>You can close this window.</p><script>window.close();</script></body></html>",
+					))
+					return
+				}
+				
+				// Success
+				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+					"<html><body><h1>Authorization Successful!</h1><p>Google Drive is now connected!</p><p>All your sessions will have access to Google Drive.</p><p>You can close this window.</p><script>window.close();</script></body></html>",
+				))
+				return
+			}
+		}
+	}
+
+	// Fallback to legacy session-specific OAuth
 	stateData, err := validateAndParseOAuthState(state)
 	if err != nil {
 		log.Printf("ERROR: State validation failed: %v (possible CSRF attack or tampering)", err)
@@ -309,7 +337,7 @@ func HandleOAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	// Store credentials in Kubernetes Secret in the project namespace
+	// Store credentials in Kubernetes Secret in the project namespace (legacy session-specific)
 	if stateData.ProjectName != "" && stateData.SessionName != "" {
 		err := storeCredentialsInSecret(
 			c.Request.Context(),
@@ -752,4 +780,339 @@ func storeCredentialsInSecret(ctx context.Context, projectName, sessionName, pro
 	}
 
 	return nil
+}
+
+// ============================================================================
+// Cluster-Level Google OAuth (User-Scoped, Not Session-Specific)
+// ============================================================================
+
+// GoogleOAuthCredentials represents cluster-level Google OAuth credentials for a user
+type GoogleOAuthCredentials struct {
+	UserID        string    `json:"userId"`
+	Email         string    `json:"email,omitempty"`
+	AccessToken   string    `json:"accessToken"`
+	RefreshToken  string    `json:"refreshToken"`
+	Scopes        []string  `json:"scopes"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// GetGoogleOAuthURLGlobal handles POST /api/auth/google/connect
+// Returns OAuth URL for cluster-level Google authentication
+func GetGoogleOAuthURLGlobal(c *gin.Context) {
+	// Verify user is authenticated
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+
+	// Get OAuth provider config
+	provider, err := getOAuthProvider("google")
+	if err != nil {
+		log.Printf("Failed to get OAuth provider: %v", err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Google OAuth not configured"})
+		return
+	}
+
+	// Build state with user context only (no session/project)
+	stateData := map[string]interface{}{
+		"provider":  "google",
+		"userID":    userID,
+		"timestamp": time.Now().Unix(),
+		"cluster":   true, // Flag to indicate cluster-level OAuth
+	}
+
+	// Serialize state to JSON
+	stateJSON, err := json.Marshal(stateData)
+	if err != nil {
+		log.Printf("Failed to marshal state: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate OAuth state"})
+		return
+	}
+
+	// Get HMAC secret from environment
+	secret := os.Getenv("OAUTH_STATE_SECRET")
+	if secret == "" {
+		log.Printf("OAUTH_STATE_SECRET not configured")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth state validation not configured"})
+		return
+	}
+
+	// Generate HMAC signature
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write(stateJSON)
+	signature := h.Sum(nil)
+
+	// Combine: base64(json) + "." + base64(signature)
+	stateToken := base64.URLEncoding.EncodeToString(stateJSON) + "." + base64.URLEncoding.EncodeToString(signature)
+
+	// Get backend URL for redirect URI
+	backendURL := os.Getenv("BACKEND_URL")
+	if backendURL == "" {
+		backendURL = "http://localhost:8080"
+	}
+	redirectURI := fmt.Sprintf("%s/oauth2callback", backendURL)
+
+	// Build OAuth URL
+	authURL := fmt.Sprintf(
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&state=%s&prompt=consent",
+		provider.ClientID,
+		redirectURI,
+		strings.Join(provider.Scopes, " "),
+		stateToken,
+	)
+
+	log.Printf("Generated cluster-level Google OAuth URL for user %s", userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"url":   authURL,
+		"state": stateToken,
+	})
+}
+
+// HandleGoogleOAuthCallback handles the OAuth callback for cluster-level Google auth
+// This is called via the generic /oauth2callback endpoint when state contains "cluster":true
+func HandleGoogleOAuthCallback(ctx context.Context, code string, stateData map[string]interface{}) error {
+	userID, _ := stateData["userID"].(string)
+	if userID == "" {
+		return fmt.Errorf("missing userID in state")
+	}
+
+	// Get OAuth provider config
+	provider, err := getOAuthProvider("google")
+	if err != nil {
+		return fmt.Errorf("failed to get OAuth provider: %w", err)
+	}
+
+	// Get backend URL for redirect URI
+	backendURL := os.Getenv("BACKEND_URL")
+	if backendURL == "" {
+		backendURL = "http://localhost:8080"
+	}
+	redirectURI := fmt.Sprintf("%s/oauth2callback", backendURL)
+
+	// Exchange code for tokens
+	tokenData, err := exchangeOAuthCode(ctx, provider, code, redirectURI)
+	if err != nil {
+		return fmt.Errorf("failed to exchange code: %w", err)
+	}
+
+	// Get user's email from Google
+	userEmail, err := getGoogleUserEmail(tokenData.AccessToken)
+	if err != nil {
+		log.Printf("Warning: failed to get user email: %v", err)
+		userEmail = "" // Non-fatal
+	}
+
+	// Store credentials in cluster-level ConfigMap
+	credentials := GoogleOAuthCredentials{
+		UserID:       userID,
+		Email:        userEmail,
+		AccessToken:  tokenData.AccessToken,
+		RefreshToken: tokenData.RefreshToken,
+		Scopes:       provider.Scopes,
+		ExpiresAt:    time.Now().Add(time.Duration(tokenData.ExpiresIn) * time.Second),
+		UpdatedAt:    time.Now(),
+	}
+
+	if err := storeGoogleCredentials(ctx, &credentials); err != nil {
+		return fmt.Errorf("failed to store credentials: %w", err)
+	}
+
+	log.Printf("✓ Stored cluster-level Google OAuth credentials for user %s", userID)
+	return nil
+}
+
+// storeGoogleCredentials stores Google OAuth credentials in cluster-level ConfigMap
+func storeGoogleCredentials(ctx context.Context, creds *GoogleOAuthCredentials) error {
+	if creds == nil || creds.UserID == "" {
+		return fmt.Errorf("invalid credentials payload")
+	}
+
+	const cmName = "google-oauth-credentials"
+	
+	for i := 0; i < 3; i++ { // retry on conflict
+		cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// Create ConfigMap
+				cm = &corev1.ConfigMap{
+					ObjectMeta: v1.ObjectMeta{
+						Name:      cmName,
+						Namespace: Namespace,
+						Labels: map[string]string{
+							"app":                            "ambient-code",
+							"ambient-code.io/oauth":          "true",
+							"ambient-code.io/oauth-provider": "google",
+						},
+					},
+					Data: map[string]string{},
+				}
+				if _, cerr := K8sClient.CoreV1().ConfigMaps(Namespace).Create(ctx, cm, v1.CreateOptions{}); cerr != nil && !errors.IsAlreadyExists(cerr) {
+					return fmt.Errorf("failed to create ConfigMap: %w", cerr)
+				}
+				// Fetch again to get resourceVersion
+				cm, err = K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+				if err != nil {
+					return fmt.Errorf("failed to fetch ConfigMap after create: %w", err)
+				}
+			} else {
+				return fmt.Errorf("failed to get ConfigMap: %w", err)
+			}
+		}
+		
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		
+		b, err := json.Marshal(creds)
+		if err != nil {
+			return fmt.Errorf("failed to marshal credentials: %w", err)
+		}
+		cm.Data[creds.UserID] = string(b)
+		
+		if _, uerr := K8sClient.CoreV1().ConfigMaps(Namespace).Update(ctx, cm, v1.UpdateOptions{}); uerr != nil {
+			if errors.IsConflict(uerr) {
+				continue // retry
+			}
+			return fmt.Errorf("failed to update ConfigMap: %w", uerr)
+		}
+		return nil
+	}
+	return fmt.Errorf("failed to update ConfigMap after retries")
+}
+
+// GetGoogleCredentials retrieves cluster-level Google OAuth credentials for a user
+func GetGoogleCredentials(ctx context.Context, userID string) (*GoogleOAuthCredentials, error) {
+	const cmName = "google-oauth-credentials"
+	cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil // No credentials stored yet
+		}
+		return nil, fmt.Errorf("failed to get ConfigMap: %w", err)
+	}
+
+	if cm.Data == nil || cm.Data[userID] == "" {
+		return nil, nil // User hasn't connected yet
+	}
+
+	var creds GoogleOAuthCredentials
+	if err := json.Unmarshal([]byte(cm.Data[userID]), &creds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal credentials: %w", err)
+	}
+
+	return &creds, nil
+}
+
+// GetGoogleOAuthStatusGlobal handles GET /api/auth/google/status
+// Returns connection status for current user
+func GetGoogleOAuthStatusGlobal(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+
+	creds, err := GetGoogleCredentials(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("Failed to get Google credentials for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check connection status"})
+		return
+	}
+
+	if creds == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"connected": false,
+		})
+		return
+	}
+
+	// Check if token is expired
+	isExpired := time.Now().After(creds.ExpiresAt)
+
+	c.JSON(http.StatusOK, gin.H{
+		"connected": true,
+		"email":     creds.Email,
+		"expiresAt": creds.ExpiresAt.Format(time.RFC3339),
+		"expired":   isExpired,
+	})
+}
+
+// DisconnectGoogleOAuthGlobal handles POST /api/auth/google/disconnect
+// Removes user's Google OAuth credentials from cluster storage
+func DisconnectGoogleOAuthGlobal(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+
+	const cmName = "google-oauth-credentials"
+	ctx := c.Request.Context()
+
+	for i := 0; i < 3; i++ { // retry on conflict
+		cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// Already disconnected
+				c.JSON(http.StatusOK, gin.H{"message": "Google Drive disconnected"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to access credentials"})
+			return
+		}
+
+		if cm.Data == nil || cm.Data[userID] == "" {
+			// Already disconnected
+			c.JSON(http.StatusOK, gin.H{"message": "Google Drive disconnected"})
+			return
+		}
+
+		delete(cm.Data, userID)
+
+		if _, uerr := K8sClient.CoreV1().ConfigMaps(Namespace).Update(ctx, cm, v1.UpdateOptions{}); uerr != nil {
+			if errors.IsConflict(uerr) {
+				continue // retry
+			}
+			log.Printf("Failed to update ConfigMap: %v", uerr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disconnect"})
+			return
+		}
+
+		log.Printf("✓ Removed Google OAuth credentials for user %s", userID)
+		c.JSON(http.StatusOK, gin.H{"message": "Google Drive disconnected successfully"})
+		return
+	}
+
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disconnect after retries"})
+}
+
+// getGoogleUserEmail fetches the user's email from Google using the access token
+func getGoogleUserEmail(accessToken string) (string, error) {
+	req, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var userInfo struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return "", err
+	}
+
+	return userInfo.Email, nil
 }

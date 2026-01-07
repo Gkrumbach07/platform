@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Loader2 } from 'lucide-react'
@@ -16,6 +16,16 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
   const { data: status, isLoading, refetch } = useGoogleStatus()
   const disconnectMutation = useDisconnectGoogle()
   const [connecting, setConnecting] = useState(false)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Cleanup polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+      }
+    }
+  }, [])
 
   const handleConnect = async () => {
     setConnecting(true)
@@ -37,10 +47,18 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
         `width=${width},height=${height},left=${left},top=${top}`
       )
 
+      // Clear any existing poll timer
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+      }
+
       // Poll for popup close and check status
-      const pollTimer = setInterval(() => {
+      pollTimerRef.current = setInterval(() => {
         if (popup?.closed) {
-          clearInterval(pollTimer)
+          if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current)
+            pollTimerRef.current = null
+          }
           setConnecting(false)
           // Refetch status to check if OAuth succeeded
           refetch()

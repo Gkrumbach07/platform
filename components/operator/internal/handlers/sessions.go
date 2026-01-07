@@ -1200,7 +1200,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	// This allows the runner to access the user's Google credentials
 	// We copy the credentials from the cluster-level ConfigMap (backend namespace) to a Secret in this namespace
 	googleOAuthSecretName := fmt.Sprintf("%s-google-oauth", name)
-	
+
 	// Try to get user's Google credentials from cluster-level ConfigMap
 	if userID != "" {
 		ownerRef := v1.OwnerReference{
@@ -1210,7 +1210,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 			UID:        currentObj.GetUID(),
 			Controller: boolPtr(true),
 		}
-		
+
 		err := syncGoogleCredentialsToSecret(context.TODO(), sessionNamespace, googleOAuthSecretName, userID, ownerRef, appConfig.BackendNamespace)
 		if err != nil {
 			log.Printf("Warning: failed to sync Google credentials for user %s to session %s: %v", userID, name, err)
@@ -1219,7 +1219,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	} else {
 		log.Printf("Warning: userID not available for session %s, creating placeholder Google OAuth secret", name)
 	}
-	
+
 	// Ensure secret exists (create placeholder if sync didn't create it)
 	if _, err := config.K8sClient.CoreV1().Secrets(sessionNamespace).Get(context.TODO(), googleOAuthSecretName, v1.GetOptions{}); errors.IsNotFound(err) {
 		placeholderSecret := &corev1.Secret{
@@ -2340,22 +2340,22 @@ func regenerateRunnerToken(sessionNamespace, sessionName string, session *unstru
 }
 
 // syncGoogleCredentialsToSecret syncs cluster-level Google OAuth credentials to session-specific Secret
-// Reads from ConfigMap "google-oauth-credentials" in backend namespace (keyed by userID)
+// Reads from Secret "google-oauth-credentials" in backend namespace (keyed by userID)
 // Writes to Secret "{sessionName}-google-oauth" in session namespace for runner to mount
 func syncGoogleCredentialsToSecret(ctx context.Context, sessionNamespace, secretName, userID string, ownerRef v1.OwnerReference, backendNamespace string) error {
-	// Read cluster-level credentials from backend namespace ConfigMap
-	const cmName = "google-oauth-credentials"
-	cm, err := config.K8sClient.CoreV1().ConfigMaps(backendNamespace).Get(ctx, cmName, v1.GetOptions{})
+	// Read cluster-level credentials from backend namespace Secret
+	const srcSecretName = "google-oauth-credentials"
+	srcSecret, err := config.K8sClient.CoreV1().Secrets(backendNamespace).Get(ctx, srcSecretName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Printf("Google OAuth ConfigMap not found - user hasn't connected Google yet")
+			log.Printf("Google OAuth Secret not found - user hasn't connected Google yet")
 			return nil // Not an error - user just hasn't authenticated
 		}
-		return fmt.Errorf("failed to get Google OAuth ConfigMap: %w", err)
+		return fmt.Errorf("failed to get Google OAuth Secret: %w", err)
 	}
 
-	if cm.Data == nil || cm.Data[userID] == "" {
-		log.Printf("No Google OAuth credentials for user %s in ConfigMap", userID)
+	if srcSecret.Data == nil || len(srcSecret.Data[userID]) == 0 {
+		log.Printf("No Google OAuth credentials for user %s in Secret", userID)
 		return nil // User hasn't connected
 	}
 
@@ -2366,7 +2366,7 @@ func syncGoogleCredentialsToSecret(ctx context.Context, sessionNamespace, secret
 		Scopes       []string `json:"scopes"`
 		ExpiresAt    string   `json:"expiresAt"`
 	}
-	if err := json.Unmarshal([]byte(cm.Data[userID]), &creds); err != nil {
+	if err := json.Unmarshal(srcSecret.Data[userID], &creds); err != nil {
 		return fmt.Errorf("failed to parse credentials: %w", err)
 	}
 

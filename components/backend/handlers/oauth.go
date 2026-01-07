@@ -307,7 +307,7 @@ func HandleOAuth2Callback(c *gin.Context) {
 			// Check if this is cluster-level OAuth
 			if isCluster, ok := stateMap["cluster"].(bool); ok && isCluster {
 				log.Printf("Detected cluster-level OAuth flow")
-				
+
 				// Handle cluster-level Google OAuth
 				if err := HandleGoogleOAuthCallback(c.Request.Context(), code, stateMap); err != nil {
 					log.Printf("Cluster-level OAuth failed: %v", err)
@@ -316,7 +316,7 @@ func HandleOAuth2Callback(c *gin.Context) {
 					))
 					return
 				}
-				
+
 				// Success
 				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
 					"<html><body><h1>Authorization Successful!</h1><p>Google Drive is now connected!</p><p>All your sessions will have access to Google Drive.</p><p>You can close this window.</p><script>window.close();</script></body></html>",
@@ -788,18 +788,25 @@ func storeCredentialsInSecret(ctx context.Context, projectName, sessionName, pro
 
 // GoogleOAuthCredentials represents cluster-level Google OAuth credentials for a user
 type GoogleOAuthCredentials struct {
-	UserID        string    `json:"userId"`
-	Email         string    `json:"email,omitempty"`
-	AccessToken   string    `json:"accessToken"`
-	RefreshToken  string    `json:"refreshToken"`
-	Scopes        []string  `json:"scopes"`
-	ExpiresAt     time.Time `json:"expiresAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	UserID       string    `json:"userId"`
+	Email        string    `json:"email,omitempty"`
+	AccessToken  string    `json:"accessToken"`
+	RefreshToken string    `json:"refreshToken"`
+	Scopes       []string  `json:"scopes"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // GetGoogleOAuthURLGlobal handles POST /api/auth/google/connect
 // Returns OAuth URL for cluster-level Google authentication
 func GetGoogleOAuthURLGlobal(c *gin.Context) {
+	// Verify user has valid K8s token (follows RBAC pattern)
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		return
+	}
+
 	// Verify user is authenticated
 	userID := c.GetString("userID")
 	if userID == "" {
@@ -924,22 +931,22 @@ func HandleGoogleOAuthCallback(ctx context.Context, code string, stateData map[s
 	return nil
 }
 
-// storeGoogleCredentials stores Google OAuth credentials in cluster-level ConfigMap
+// storeGoogleCredentials stores Google OAuth credentials in cluster-level Secret
 func storeGoogleCredentials(ctx context.Context, creds *GoogleOAuthCredentials) error {
 	if creds == nil || creds.UserID == "" {
 		return fmt.Errorf("invalid credentials payload")
 	}
 
-	const cmName = "google-oauth-credentials"
-	
+	const secretName = "google-oauth-credentials"
+
 	for i := 0; i < 3; i++ { // retry on conflict
-		cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+		secret, err := K8sClient.CoreV1().Secrets(Namespace).Get(ctx, secretName, v1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
-				// Create ConfigMap
-				cm = &corev1.ConfigMap{
+				// Create Secret
+				secret = &corev1.Secret{
 					ObjectMeta: v1.ObjectMeta{
-						Name:      cmName,
+						Name:      secretName,
 						Namespace: Namespace,
 						Labels: map[string]string{
 							"app":                            "ambient-code",
@@ -947,59 +954,60 @@ func storeGoogleCredentials(ctx context.Context, creds *GoogleOAuthCredentials) 
 							"ambient-code.io/oauth-provider": "google",
 						},
 					},
-					Data: map[string]string{},
+					Type: corev1.SecretTypeOpaque,
+					Data: map[string][]byte{},
 				}
-				if _, cerr := K8sClient.CoreV1().ConfigMaps(Namespace).Create(ctx, cm, v1.CreateOptions{}); cerr != nil && !errors.IsAlreadyExists(cerr) {
-					return fmt.Errorf("failed to create ConfigMap: %w", cerr)
+				if _, cerr := K8sClient.CoreV1().Secrets(Namespace).Create(ctx, secret, v1.CreateOptions{}); cerr != nil && !errors.IsAlreadyExists(cerr) {
+					return fmt.Errorf("failed to create Secret: %w", cerr)
 				}
 				// Fetch again to get resourceVersion
-				cm, err = K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+				secret, err = K8sClient.CoreV1().Secrets(Namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err != nil {
-					return fmt.Errorf("failed to fetch ConfigMap after create: %w", err)
+					return fmt.Errorf("failed to fetch Secret after create: %w", err)
 				}
 			} else {
-				return fmt.Errorf("failed to get ConfigMap: %w", err)
+				return fmt.Errorf("failed to get Secret: %w", err)
 			}
 		}
-		
-		if cm.Data == nil {
-			cm.Data = map[string]string{}
+
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
 		}
-		
+
 		b, err := json.Marshal(creds)
 		if err != nil {
 			return fmt.Errorf("failed to marshal credentials: %w", err)
 		}
-		cm.Data[creds.UserID] = string(b)
-		
-		if _, uerr := K8sClient.CoreV1().ConfigMaps(Namespace).Update(ctx, cm, v1.UpdateOptions{}); uerr != nil {
+		secret.Data[creds.UserID] = b
+
+		if _, uerr := K8sClient.CoreV1().Secrets(Namespace).Update(ctx, secret, v1.UpdateOptions{}); uerr != nil {
 			if errors.IsConflict(uerr) {
 				continue // retry
 			}
-			return fmt.Errorf("failed to update ConfigMap: %w", uerr)
+			return fmt.Errorf("failed to update Secret: %w", uerr)
 		}
 		return nil
 	}
-	return fmt.Errorf("failed to update ConfigMap after retries")
+	return fmt.Errorf("failed to update Secret after retries")
 }
 
 // GetGoogleCredentials retrieves cluster-level Google OAuth credentials for a user
 func GetGoogleCredentials(ctx context.Context, userID string) (*GoogleOAuthCredentials, error) {
-	const cmName = "google-oauth-credentials"
-	cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+	const secretName = "google-oauth-credentials"
+	secret, err := K8sClient.CoreV1().Secrets(Namespace).Get(ctx, secretName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil // No credentials stored yet
 		}
-		return nil, fmt.Errorf("failed to get ConfigMap: %w", err)
+		return nil, fmt.Errorf("failed to get Secret: %w", err)
 	}
 
-	if cm.Data == nil || cm.Data[userID] == "" {
+	if secret.Data == nil || len(secret.Data[userID]) == 0 {
 		return nil, nil // User hasn't connected yet
 	}
 
 	var creds GoogleOAuthCredentials
-	if err := json.Unmarshal([]byte(cm.Data[userID]), &creds); err != nil {
+	if err := json.Unmarshal(secret.Data[userID], &creds); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal credentials: %w", err)
 	}
 
@@ -1009,6 +1017,13 @@ func GetGoogleCredentials(ctx context.Context, userID string) (*GoogleOAuthCrede
 // GetGoogleOAuthStatusGlobal handles GET /api/auth/google/status
 // Returns connection status for current user
 func GetGoogleOAuthStatusGlobal(c *gin.Context) {
+	// Verify user has valid K8s token (follows RBAC pattern)
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		return
+	}
+
 	userID := c.GetString("userID")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
@@ -1043,17 +1058,24 @@ func GetGoogleOAuthStatusGlobal(c *gin.Context) {
 // DisconnectGoogleOAuthGlobal handles POST /api/auth/google/disconnect
 // Removes user's Google OAuth credentials from cluster storage
 func DisconnectGoogleOAuthGlobal(c *gin.Context) {
+	// Verify user has valid K8s token (follows RBAC pattern)
+	reqK8s, _ := GetK8sClientsForRequest(c)
+	if reqK8s == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		return
+	}
+
 	userID := c.GetString("userID")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
 		return
 	}
 
-	const cmName = "google-oauth-credentials"
+	const secretName = "google-oauth-credentials"
 	ctx := c.Request.Context()
 
 	for i := 0; i < 3; i++ { // retry on conflict
-		cm, err := K8sClient.CoreV1().ConfigMaps(Namespace).Get(ctx, cmName, v1.GetOptions{})
+		secret, err := K8sClient.CoreV1().Secrets(Namespace).Get(ctx, secretName, v1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				// Already disconnected
@@ -1064,19 +1086,19 @@ func DisconnectGoogleOAuthGlobal(c *gin.Context) {
 			return
 		}
 
-		if cm.Data == nil || cm.Data[userID] == "" {
+		if secret.Data == nil || len(secret.Data[userID]) == 0 {
 			// Already disconnected
 			c.JSON(http.StatusOK, gin.H{"message": "Google Drive disconnected"})
 			return
 		}
 
-		delete(cm.Data, userID)
+		delete(secret.Data, userID)
 
-		if _, uerr := K8sClient.CoreV1().ConfigMaps(Namespace).Update(ctx, cm, v1.UpdateOptions{}); uerr != nil {
+		if _, uerr := K8sClient.CoreV1().Secrets(Namespace).Update(ctx, secret, v1.UpdateOptions{}); uerr != nil {
 			if errors.IsConflict(uerr) {
 				continue // retry
 			}
-			log.Printf("Failed to update ConfigMap: %v", uerr)
+			log.Printf("Failed to update Secret: %v", uerr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disconnect"})
 			return
 		}

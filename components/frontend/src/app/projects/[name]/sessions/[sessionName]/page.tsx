@@ -1417,24 +1417,30 @@ export default function ProjectSessionDetailPage({
               {/* Left Column - Accordions - always show with state-based styling */}
               {session && (
                 <div className={cn(
-                  "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] overflow-y-auto pt-6 pl-6 pr-6 bg-card relative",
+                  "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] pt-6 pl-6 pr-6 bg-card relative",
                   "md:flex md:pr-0",
                   mobileMenuOpen ? "fixed left-0 top-16 z-50 shadow-lg" : "hidden",
                   // Disable interactions when not running
-                  phase !== "Running" && "pointer-events-none",
-                  // Visual states
-                  ["Creating", "Pending", "Stopping"].includes(phase) && "opacity-60",
-                  ["Stopped", "Completed", "Failed"].includes(phase) && "opacity-50"
+                  phase !== "Running" && "pointer-events-none"
                 )}>
+                  {/* Backdrop blur layer for entire sidebar */}
+                  {phase !== "Running" && (
+                    <div className={cn(
+                      "absolute inset-0 z-[5] backdrop-blur-[1px]",
+                      ["Creating", "Pending", "Stopping"].includes(phase) && "bg-background/40",
+                      ["Stopped", "Completed", "Failed"].includes(phase) && "bg-background/50 backdrop-blur-[2px]"
+                    )} />
+                  )}
+
                   {/* State overlay for non-running sessions */}
                   {phase !== "Running" && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm pointer-events-auto">
-                      <div className="text-center p-6 bg-card border rounded-lg shadow-lg max-w-sm">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-auto">
+                      <div className="text-center">
                         {/* Starting states */}
                         {["Creating", "Pending"].includes(phase) && (
                           <>
-                            <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-blue-600" />
-                            <h3 className="font-semibold mb-1">Starting Session</h3>
+                            <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-blue-600" />
+                            <h3 className="font-semibold text-lg mb-1">Starting Session</h3>
                             <p className="text-sm text-muted-foreground">
                               Setting up your workspace...
                             </p>
@@ -1444,8 +1450,8 @@ export default function ProjectSessionDetailPage({
                         {/* Stopping state */}
                         {phase === "Stopping" && (
                           <>
-                            <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-orange-600" />
-                            <h3 className="font-semibold mb-1">Stopping Session</h3>
+                            <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-orange-600" />
+                            <h3 className="font-semibold text-lg mb-1">Stopping Session</h3>
                             <p className="text-sm text-muted-foreground">
                               Saving workspace state...
                             </p>
@@ -1454,15 +1460,50 @@ export default function ProjectSessionDetailPage({
                         
                         {/* Hibernated states */}
                         {["Stopped", "Completed", "Failed"].includes(phase) && (
-                          <>
-                            <div className="h-8 w-8 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
-                              <span className="text-lg">😴</span>
+                          <div className="max-w-sm">
+                            <h3 className="font-semibold text-lg mb-4">Session Hibernated</h3>
+                            
+                            {/* Session details */}
+                            <div className="space-y-3 mb-6 text-left">
+                              {workflowManagement.activeWorkflow && (
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Workflow</p>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {workflowManagement.activeWorkflow}
+                                  </Badge>
+                                </div>
+                              )}
+                              
+                              {session?.spec?.repos && session.spec.repos.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1.5">
+                                    Repositories ({session.spec.repos.length})
+                                  </p>
+                                  <div className="text-sm text-foreground/80 space-y-1">
+                                    {session.spec.repos.slice(0, 3).map((repo, idx) => (
+                                      <div key={idx} className="truncate">
+                                        • {repo.url?.split('/').pop()?.replace('.git', '')}
+                                      </div>
+                                    ))}
+                                    {session.spec.repos.length > 3 && (
+                                      <div className="text-xs text-muted-foreground mt-1">
+                                        +{session.spec.repos.length - 3} more
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {(!workflowManagement.activeWorkflow && (!session?.spec?.repos || session.spec.repos.length === 0)) && (
+                                <div className="text-center py-2">
+                                  <p className="text-xs text-muted-foreground">
+                                    No workflow or repositories configured
+                                  </p>
+                                </div>
+                              )}
                             </div>
-                            <h3 className="font-semibold mb-1">Session Paused</h3>
-                            <p className="text-sm text-muted-foreground mb-4">
-                              Workspace preserved in storage
-                            </p>
-                            <Button onClick={handleContinue} className="w-full" disabled={continueMutation.isPending}>
+                            
+                            <Button onClick={handleContinue} size="lg" className="w-full" disabled={continueMutation.isPending}>
                               {continueMutation.isPending ? (
                                 <>
                                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1472,7 +1513,7 @@ export default function ProjectSessionDetailPage({
                                 'Resume Session'
                               )}
                             </Button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </div>

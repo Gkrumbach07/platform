@@ -287,67 +287,66 @@ async def interrupt_run():
 @app.get("/mcp/status")
 async def get_mcp_status():
     """
-    Returns the status of MCP servers loaded in this session.
-    Called by backend to display MCP integration status in UI.
+    Returns MCP servers configured for this session.
+    Goes straight to the source - uses adapter's _load_mcp_config() method.
+    
+    Note: Status is "configured" not "connected" - we can't verify runtime state
+    without introspecting the Claude SDK's internal MCP server processes.
     """
     try:
-        import json
+        global adapter
         
-        workspace_path = os.getenv("WORKSPACE_PATH", "/workspace")
+        if not adapter:
+            return {
+                "servers": [],
+                "totalCount": 0,
+                "message": "Adapter not initialized yet"
+            }
         
-        # Check for active workflow's .mcp.json
+        mcp_servers_list = []
+        
+        # Get the working directory (same logic as adapter uses)
+        workspace_path = adapter.context.workspace_path if adapter.context else "/workspace"
+        
         active_workflow_url = os.getenv('ACTIVE_WORKFLOW_GIT_URL', '').strip()
-        mcp_servers = []
+        cwd_path = workspace_path
         
         if active_workflow_url:
-            # Derive workflow name
             workflow_name = active_workflow_url.split("/")[-1].removesuffix(".git")
-            mcp_config_path = Path(workspace_path) / "workflows" / workflow_name / ".mcp.json"
-            
-            if mcp_config_path.exists():
-                try:
-                    with open(mcp_config_path, 'r') as f:
-                        config = json.load(f)
-                        mcp_config = config.get('mcpServers', {})
-                        
-                        for server_name in mcp_config.keys():
-                            mcp_servers.append({
-                                "name": server_name,
-                                "displayName": server_name.replace('-', ' ').replace('_', ' ').title(),
-                                "status": "connected",
-                                "source": "workflow"
-                            })
-                except Exception as e:
-                    logger.warning(f"Failed to read .mcp.json: {e}")
+            workflow_path = os.path.join(workspace_path, "workflows", workflow_name)
+            if os.path.exists(workflow_path):
+                cwd_path = workflow_path
         
-        # Always include WebFetch.MCP (auto-added by adapter)
-        if not any(s['name'] == 'webfetch' for s in mcp_servers):
-            mcp_servers.append({
-                "name": "webfetch",
-                "displayName": "WebFetch MCP",
-                "status": "connected",
-                "source": "platform"
-            })
+        # Use adapter's method to load MCP config (same as it does during runs)
+        mcp_config = adapter._load_mcp_config(cwd_path)
+        logger.info(f"MCP config: {mcp_config}")
         
-        # Check for Google OAuth credentials
-        google_creds_path = Path("/workspace/.google_workspace_mcp/credentials/credentials.json")
-        if google_creds_path.exists() and google_creds_path.stat().st_size > 0:
-            if not any(s['name'] == 'google-workspace-mcp' for s in mcp_servers):
-                mcp_servers.append({
-                    "name": "google-workspace-mcp",
-                    "displayName": "Google Workspace MCP",
-                    "status": "connected",
-                    "source": "oauth"
+        if mcp_config:
+            for server_name, server_config in mcp_config.items():
+                # Check if this is WebFetch (auto-added by adapter)
+                is_webfetch = server_name == "webfetch"
+                
+                mcp_servers_list.append({
+                    "name": server_name,
+                    "displayName": server_name.replace('-', ' ').replace('_', ' ').title(),
+                    "status": "configured",  # Honest: we know it's configured, not if it's actually running
+                    "command": server_config.get("command", ""),
+                    "source": "platform" if is_webfetch else "workflow"
                 })
         
         return {
-            "servers": mcp_servers,
-            "totalCount": len(mcp_servers)
+            "servers": mcp_servers_list,
+            "totalCount": len(mcp_servers_list),
+            "note": "Status shows 'configured' - actual runtime state requires SDK introspection"
         }
         
     except Exception as e:
-        logger.error(f"Failed to get MCP status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to get MCP status: {e}", exc_info=True)
+        return {
+            "servers": [],
+            "totalCount": 0,
+            "error": str(e)
+        }
 
 
 async def clone_workflow_at_runtime(git_url: str, branch: str, subpath: str) -> tuple[bool, str]:

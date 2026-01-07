@@ -20,8 +20,9 @@ import type {
 export type McpServer = {
   name: string;
   displayName: string;
-  status: 'connected' | 'disconnected' | 'error';
+  status: 'configured' | 'connected' | 'disconnected' | 'error';
   source?: string;
+  command?: string;
 };
 
 export type McpStatusResponse = {

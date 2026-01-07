@@ -21,10 +21,11 @@ export function McpIntegrationsAccordion({
   // Fetch real MCP status from runner
   const { data: mcpStatus } = useMcpStatus(projectName, sessionName)
   const mcpServers = mcpStatus?.servers || []
-  const getStatusIcon = (status: 'connected' | 'disconnected' | 'error') => {
+  const getStatusIcon = (status: 'configured' | 'connected' | 'disconnected' | 'error') => {
     switch (status) {
+      case 'configured':
       case 'connected':
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />
+        return <CheckCircle2 className="h-4 w-4 text-blue-600" />
       case 'error':
         return <XCircle className="h-4 w-4 text-red-600" />
       case 'disconnected':
@@ -33,8 +34,14 @@ export function McpIntegrationsAccordion({
     }
   }
 
-  const getStatusBadge = (status: 'connected' | 'disconnected' | 'error') => {
+  const getStatusBadge = (status: 'configured' | 'connected' | 'disconnected' | 'error') => {
     switch (status) {
+      case 'configured':
+        return (
+          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+            Configured
+          </Badge>
+        )
       case 'connected':
         return (
           <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">

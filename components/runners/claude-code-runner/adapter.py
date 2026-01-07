@@ -1299,6 +1299,11 @@ class ClaudeCodeAdapter:
             else:
                 prompt += f"**Repositories** ({len(repo_names)} total): {', '.join([f'repos/{name}/' for name in repo_names[:5]])}, and {len(repo_names) - 5} more\n\n"
 
+        # MCP Integration Setup Instructions
+        prompt += "## MCP Integrations\n"
+        prompt += "If you need Google Drive access: Ask user to go to Integrations page in Ambient and authenticate with Google Drive.\n"
+        prompt += "If you need Jira access: Ask user to go to Workspace Settings in Ambient and configure Jira credentials there.\n\n"
+
         # Workflow instructions (if any)
         if ambient_config.get("systemPrompt"):
             prompt += f"## Workflow Instructions\n{ambient_config['systemPrompt']}\n\n"

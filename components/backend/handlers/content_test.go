@@ -830,12 +830,13 @@ var _ = Describe("Content Handler", Label(test_constants.LabelUnit, test_constan
 			})
 
 			It("Should parse workflow metadata when available", func() {
-				// Create test workflow structure
-				sessionDir := filepath.Join(tempStateDir, "sessions", "test-session", "workspace", "workflows", "test-workflow")
-				claudeDir := filepath.Join(sessionDir, ".claude")
+				// Create test workflow structure at StateBaseDir/workflows/{workflow-name}
+				// findActiveWorkflowDir looks in StateBaseDir/workflows/ for directories with .claude subdirectory
+				workflowDir := filepath.Join(tempStateDir, "workflows", "test-workflow")
+				claudeDir := filepath.Join(workflowDir, ".claude")
 				commandsDir := filepath.Join(claudeDir, "commands")
 				agentsDir := filepath.Join(claudeDir, "agents")
-				ambientDir := filepath.Join(sessionDir, ".ambient")
+				ambientDir := filepath.Join(workflowDir, ".ambient")
 
 				err := os.MkdirAll(commandsDir, 0755)
 				Expect(err).NotTo(HaveOccurred())
@@ -917,7 +918,7 @@ This is a test agent.
 
 				slashCommandInterface, exists := command["slashCommand"]
 				Expect(exists).To(BeTrue(), "Command should contain 'slashCommand' field")
-				Expect(slashCommandInterface).To(Equal("/command"))
+				Expect(slashCommandInterface).To(Equal("/test.command"))
 
 				iconInterface, exists := command["icon"]
 				Expect(exists).To(BeTrue(), "Command should contain 'icon' field")

@@ -797,6 +797,21 @@ type GoogleOAuthCredentials struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
+// isValidUserID validates userID for use as a Kubernetes Secret data key
+// Keys must be valid DNS subdomain names (RFC 1123) and reasonable length
+func isValidUserID(userID string) bool {
+	if userID == "" || len(userID) > 253 {
+		return false
+	}
+	// Reject path traversal and invalid characters for Secret data keys
+	for _, ch := range userID {
+		if ch == '/' || ch == '\\' || ch == '\x00' {
+			return false
+		}
+	}
+	return true
+}
+
 // GetGoogleOAuthURLGlobal handles POST /api/auth/google/connect
 // Returns OAuth URL for cluster-level Google authentication
 func GetGoogleOAuthURLGlobal(c *gin.Context) {
@@ -807,10 +822,14 @@ func GetGoogleOAuthURLGlobal(c *gin.Context) {
 		return
 	}
 
-	// Verify user is authenticated
+	// Verify user is authenticated and userID is valid
 	userID := c.GetString("userID")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if !isValidUserID(userID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user identifier"})
 		return
 	}
 
@@ -906,7 +925,7 @@ func HandleGoogleOAuthCallback(ctx context.Context, code string, stateData map[s
 	}
 
 	// Get user's email from Google
-	userEmail, err := getGoogleUserEmail(tokenData.AccessToken)
+	userEmail, err := getGoogleUserEmail(ctx, tokenData.AccessToken)
 	if err != nil {
 		log.Printf("Warning: failed to get user email: %v", err)
 		userEmail = "" // Non-fatal
@@ -1029,6 +1048,10 @@ func GetGoogleOAuthStatusGlobal(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
 		return
 	}
+	if !isValidUserID(userID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user identifier"})
+		return
+	}
 
 	creds, err := GetGoogleCredentials(c.Request.Context(), userID)
 	if err != nil {
@@ -1068,6 +1091,10 @@ func DisconnectGoogleOAuthGlobal(c *gin.Context) {
 	userID := c.GetString("userID")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if !isValidUserID(userID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user identifier"})
 		return
 	}
 
@@ -1112,14 +1139,17 @@ func DisconnectGoogleOAuthGlobal(c *gin.Context) {
 }
 
 // getGoogleUserEmail fetches the user's email from Google using the access token
-func getGoogleUserEmail(accessToken string) (string, error) {
-	req, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+func getGoogleUserEmail(ctx context.Context, accessToken string) (string, error) {
+	// Create request with context for timeout/cancellation support
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	// Use client with timeout instead of DefaultClient
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -47,6 +47,13 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
         `width=${width},height=${height},left=${left},top=${top}`
       )
 
+      // Check if popup was blocked
+      if (!popup || popup.closed) {
+        errorToast('Popup was blocked. Please allow popups for this site and try again.')
+        setConnecting(false)
+        return
+      }
+
       // Clear any existing poll timer
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
@@ -54,7 +61,7 @@ export function GoogleDriveConnectionCard({ showManageButton = true }: Props) {
 
       // Poll for popup close and check status
       pollTimerRef.current = setInterval(() => {
-        if (popup?.closed) {
+        if (popup.closed) {
           if (pollTimerRef.current) {
             clearInterval(pollTimerRef.current)
             pollTimerRef.current = null

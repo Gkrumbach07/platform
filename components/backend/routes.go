@@ -38,6 +38,7 @@ func registerRoutes(r *gin.Engine) {
 		projectGroup := api.Group("/projects/:projectName", handlers.ValidateProjectContext())
 		{
 			projectGroup.GET("/access", handlers.AccessCheck)
+			projectGroup.GET("/integration-status", handlers.GetProjectIntegrationStatus)
 			projectGroup.GET("/users/forks", handlers.ListUserForks)
 			projectGroup.POST("/users/forks", handlers.CreateUserFork)
 

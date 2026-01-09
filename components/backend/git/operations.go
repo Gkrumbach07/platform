@@ -1635,7 +1635,7 @@ type MergeStatus struct {
 }
 
 // CheckMergeStatus checks if local and remote can merge cleanly
-func CheckMergeStatus(ctx context.Context, repoDir, branch string) (*MergeStatus, error) {
+func CheckMergeStatus(ctx context.Context, repoDir, branch, githubToken string) (*MergeStatus, error) {
 	if branch == "" {
 		branch = "main"
 	}
@@ -1655,8 +1655,15 @@ func CheckMergeStatus(ctx context.Context, repoDir, branch string) (*MergeStatus
 		return stdout.String(), nil
 	}
 
-	// Fetch remote branch
-	_, err := run("git", "fetch", "origin", branch)
+	// Fetch remote branch with authentication if token provided
+	var err error
+	if githubToken != "" {
+		// Configure git to use token for this fetch operation
+		cfg := fmt.Sprintf("url.https://x-access-token:%s@github.com/.insteadOf=https://github.com/", githubToken)
+		_, err = run("git", "-c", cfg, "fetch", "origin", branch)
+	} else {
+		_, err = run("git", "fetch", "origin", branch)
+	}
 	if err != nil {
 		// Remote branch doesn't exist yet
 		status.RemoteBranchExists = false

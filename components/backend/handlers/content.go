@@ -28,12 +28,22 @@ var (
 	GitPushRepo           func(ctx context.Context, repoDir, commitMessage, outputRepoURL, branch, githubToken string) (string, error)
 	GitAbandonRepo        func(ctx context.Context, repoDir string) error
 	GitDiffRepo           func(ctx context.Context, repoDir string) (*git.DiffSummary, error)
-	GitCheckMergeStatus   func(ctx context.Context, repoDir, branch string) (*git.MergeStatus, error)
+	GitCheckMergeStatus   func(ctx context.Context, repoDir, branch, githubToken string) (*git.MergeStatus, error)
 	GitPullRepo           func(ctx context.Context, repoDir, branch string) error
 	GitPushToRepo         func(ctx context.Context, repoDir, branch, commitMessage string) error
 	GitCreateBranch       func(ctx context.Context, repoDir, branchName string) error
 	GitListRemoteBranches func(ctx context.Context, repoDir string) ([]string, error)
 )
+
+// getGitHubTokenFromContext extracts GitHub token from request header or environment
+func getGitHubTokenFromContext(c *gin.Context) string {
+	// Prefer header (passed by backend)
+	if token := strings.TrimSpace(c.GetHeader("X-GitHub-Token")); token != "" {
+		return token
+	}
+	// Fall back to env var (injected via EnvFrom)
+	return os.Getenv("GITHUB_TOKEN")
+}
 
 // ContentGitPush handles POST /content/github/push in CONTENT_SERVICE_MODE
 func ContentGitPush(c *gin.Context) {
@@ -695,7 +705,8 @@ func ContentGitMergeStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := GitCheckMergeStatus(c.Request.Context(), abs, branch)
+	githubToken := getGitHubTokenFromContext(c)
+	status, err := GitCheckMergeStatus(c.Request.Context(), abs, branch, githubToken)
 	if err != nil {
 		log.Printf("ContentGitMergeStatus: check failed: %v", err)
 		// Log actual error for debugging, but return generic message to avoid leaking internal details

@@ -984,3 +984,27 @@ func getUserSubjectNamespace(subject string) string {
 	}
 	return ""
 }
+
+// GetProjectIntegrationStatus returns the status of configured integrations
+// GET /api/projects/:projectName/integration-status
+func GetProjectIntegrationStatus(c *gin.Context) {
+	project := c.GetString("project")
+	k8sClt, k8sDyn := GetK8sClientsForRequest(c)
+	if k8sClt == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Check GitHub integration (GitHub App or GITHUB_TOKEN)
+	// Use a probe userId to check if token can be retrieved
+	githubConfigured := false
+	if _, err := GetGitHubToken(ctx, k8sClt, k8sDyn, project, "probe"); err == nil {
+		githubConfigured = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"github": githubConfigured,
+	})
+}

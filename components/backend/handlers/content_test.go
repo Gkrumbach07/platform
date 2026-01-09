@@ -742,7 +742,7 @@ var _ = Describe("Content Handler", Label(test_constants.LabelUnit, test_constan
 				err := os.MkdirAll(gitDir, 0755)
 				Expect(err).NotTo(HaveOccurred())
 
-				GitCheckMergeStatus = func(ctx context.Context, repoDir, branch string) (*git.MergeStatus, error) {
+				GitCheckMergeStatus = func(ctx context.Context, repoDir, branch, githubToken string) (*git.MergeStatus, error) {
 					return &git.MergeStatus{
 						CanMergeClean:      true,
 						LocalChanges:       0,
@@ -788,7 +788,7 @@ var _ = Describe("Content Handler", Label(test_constants.LabelUnit, test_constan
 				err := os.MkdirAll(gitDir, 0755)
 				Expect(err).NotTo(HaveOccurred())
 
-				GitCheckMergeStatus = func(ctx context.Context, repoDir, branch string) (*git.MergeStatus, error) {
+				GitCheckMergeStatus = func(ctx context.Context, repoDir, branch, githubToken string) (*git.MergeStatus, error) {
 					Expect(branch).To(Equal("main"))
 					return &git.MergeStatus{}, nil
 				}

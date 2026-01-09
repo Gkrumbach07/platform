@@ -18,6 +18,8 @@ import {
   Download,
   SlidersHorizontal,
   ArrowLeft,
+  MessageSquare,
+  AlertTriangle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -102,6 +104,7 @@ import {
   useOOTBWorkflows,
   useWorkflowMetadata,
 } from "@/services/queries/use-workflows";
+import { useProjectIntegrationStatus } from "@/services/queries/use-projects";
 import { useMutation } from "@tanstack/react-query";
 
 // Constants for artifact auto-refresh timing
@@ -194,6 +197,10 @@ export default function ProjectSessionDetailPage({
   const stopMutation = useStopSession();
   const deleteMutation = useDeleteSession();
   const continueMutation = useContinueSession();
+  
+  // Check integration status
+  const { data: integrationStatus } = useProjectIntegrationStatus(projectName);
+  const githubConfigured = integrationStatus?.github ?? false;
 
   // Extract phase for sidebar state management
   const phase = session?.status?.phase || "Pending";
@@ -1805,18 +1812,49 @@ export default function ProjectSessionDetailPage({
 
                           {/* Remote Configuration */}
                           {!currentRemote ? (
-                            <div className="border border-blue-200 bg-blue-50 rounded-md px-3 py-2 flex items-center justify-between dark:border-blue-800 dark:bg-blue-950/50">
-                              <span className="text-sm text-blue-800 dark:text-blue-300">
-                                Set up Git remote for version control
-                              </span>
-                              <Button
-                                onClick={() => setRemoteDialogOpen(true)}
-                                size="sm"
-                                variant="outline"
-                              >
-                                <GitBranch className="mr-2 h-3 w-3" />
-                                Configure
-                              </Button>
+                            <div className="space-y-2">
+                              {!githubConfigured && (
+                                <Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/50">
+                                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
+                                  <AlertTitle className="text-amber-900 dark:text-amber-100">GitHub Not Configured</AlertTitle>
+                                  <AlertDescription className="text-amber-800 dark:text-amber-200">
+                                    Configure GitHub integration in{" "}
+                                    <a 
+                                      href={`/projects/${projectName}?section=settings`}
+                                      className="underline font-medium hover:text-amber-900 dark:hover:text-amber-100"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      workspace settings
+                                    </a>
+                                    {" "}to enable git operations.
+                                  </AlertDescription>
+                                </Alert>
+                              )}
+                              <div className="border border-blue-200 bg-blue-50 rounded-md px-3 py-2 flex items-center justify-between dark:border-blue-800 dark:bg-blue-950/50">
+                                <span className="text-sm text-blue-800 dark:text-blue-300">
+                                  Set up Git remote for version control
+                                </span>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        onClick={() => setRemoteDialogOpen(true)}
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!githubConfigured}
+                                      >
+                                        <GitBranch className="mr-2 h-3 w-3" />
+                                        Configure
+                                      </Button>
+                                    </TooltipTrigger>
+                                    {!githubConfigured && (
+                                      <TooltipContent>
+                                        <p>Configure GitHub in workspace settings</p>
+                                      </TooltipContent>
+                                    )}
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
                             </div>
                           ) : (
                             <div className="border rounded-md px-2 py-1.5">
@@ -1836,11 +1874,47 @@ export default function ProjectSessionDetailPage({
                                 <div className="flex-1" />
 
                                 {mergeStatus && !mergeStatus.canMergeClean ? (
-                                  <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                                    <X className="h-3 w-3" />
-                                    <span className="font-medium">
-                                      conflict
-                                    </span>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                                      <X className="h-3 w-3" />
+                                      <span className="font-medium">
+                                        conflict
+                                      </span>
+                                    </div>
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={async () => {
+                                              const msg = `There's a merge conflict in ${selectedDirectory.name} with branch "${currentRemote?.branch || 'main'}". Please resolve it. Conflicting files: ${mergeStatus.conflictingFiles?.join(", ") || "unknown"}.`;
+                                              if (session?.status?.phase === "Running" && !isRunActive) {
+                                                try {
+                                                  await aguiSendMessage(msg);
+                                                } catch (err) {
+                                                  errorToast(err instanceof Error ? err.message : "Failed to send message");
+                                                }
+                                              }
+                                            }}
+                                            disabled={isRunActive || session?.status?.phase !== "Running"}
+                                            className="h-5 text-xs px-2 gap-1"
+                                          >
+                                            <MessageSquare className="h-3 w-3" />
+                                            Fix in Chat
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          {isRunActive ? (
+                                            <p>Wait for agent to finish</p>
+                                          ) : session?.status?.phase !== "Running" ? (
+                                            <p>Session is not running</p>
+                                          ) : (
+                                            <p>Ask the agent to resolve the conflict</p>
+                                          )}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
                                   </div>
                                 ) : gitOps.gitStatus?.hasChanges ||
                                   mergeStatus?.remoteCommitsAhead ? (
@@ -1872,6 +1946,7 @@ export default function ProjectSessionDetailPage({
                                           )
                                         }
                                         disabled={
+                                          !githubConfigured ||
                                           !mergeStatus?.canMergeClean ||
                                           gitOps.synchronizing ||
                                           gitOps.gitStatus?.hasChanges
@@ -1887,7 +1962,9 @@ export default function ProjectSessionDetailPage({
                                     </TooltipTrigger>
                                     <TooltipContent>
                                       <p>
-                                        {gitOps.gitStatus?.hasChanges
+                                        {!githubConfigured
+                                          ? "Configure GitHub in workspace settings"
+                                          : gitOps.gitStatus?.hasChanges
                                           ? "Commit changes first"
                                           : `Sync with origin/${currentRemote?.branch || "main"}`}
                                       </p>
@@ -1915,7 +1992,7 @@ export default function ProjectSessionDetailPage({
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       onClick={() => setCommitModalOpen(true)}
-                                      disabled={!gitOps.gitStatus?.hasChanges}
+                                      disabled={!githubConfigured || !gitOps.gitStatus?.hasChanges}
                                     >
                                       <Edit className="mr-2 h-3 w-3" />
                                       Commit Changes
@@ -1925,6 +2002,7 @@ export default function ProjectSessionDetailPage({
                                         gitOps.handleGitPull(refetchMergeStatus)
                                       }
                                       disabled={
+                                        !githubConfigured ||
                                         !mergeStatus?.canMergeClean ||
                                         gitOps.isPulling
                                       }
@@ -1937,6 +2015,7 @@ export default function ProjectSessionDetailPage({
                                         gitOps.handleGitPush(refetchMergeStatus)
                                       }
                                       disabled={
+                                        !githubConfigured ||
                                         !mergeStatus?.canMergeClean ||
                                         gitOps.isPushing ||
                                         gitOps.gitStatus?.hasChanges

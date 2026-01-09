@@ -992,7 +992,7 @@ func GetProjectIntegrationStatus(c *gin.Context) {
 
 	// User authorization verified by ValidateProjectContext middleware
 	// K8sClientProjects is the backend SA client - users lack permission to read Secrets directly
-	
+
 	ctx := c.Request.Context()
 
 	// Check if GITHUB_TOKEN exists in project's integration secret

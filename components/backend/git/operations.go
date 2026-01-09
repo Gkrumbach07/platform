@@ -2018,13 +2018,3 @@ func SyncRepo(ctx context.Context, repoDir, commitMessage, branch, githubToken s
 	log.Printf("Successfully synchronized %s to %s", repoDir, branch)
 	return nil
 }
-
-// Helper function to check if string slice contains a value
-func contains(slice []string, str string) bool {
-	for _, s := range slice {
-		if s == str {
-			return true
-		}
-	}
-	return false
-}

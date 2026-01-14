@@ -2034,6 +2034,17 @@ export default function ProjectSessionDetailPage({
         onSubmit={(url, branch, path) => {
           workflowManagement.setCustomWorkflow(url, branch, path);
           setCustomWorkflowDialogOpen(false);
+          // Automatically activate the custom workflow (same as OOTB workflows)
+          const customWorkflow = {
+            id: "custom",
+            name: "Custom workflow",
+            description: `Custom workflow from ${url}`,
+            gitUrl: url,
+            branch: branch || "main",
+            path: path || "",
+            enabled: true,
+          };
+          workflowManagement.activateWorkflow(customWorkflow, session?.status?.phase);
         }}
         isActivating={workflowManagement.workflowActivating}
       />

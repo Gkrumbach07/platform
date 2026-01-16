@@ -34,6 +34,19 @@ type FeedbackRequest = {
   transcript?: Array<{ role: string; content: string; timestamp?: string }>;
 };
 
+/**
+ * Sanitize a string to prevent log injection attacks.
+ * Removes control characters that could be used to fake log entries.
+ */
+function sanitizeString(input: string): string {
+  // Remove control characters except newlines and tabs (which we'll normalize)
+  // This prevents log injection via carriage returns, null bytes, etc.
+  return input
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control chars except \t \n \r
+    .replace(/\r\n/g, '\n') // Normalize line endings
+    .replace(/\r/g, '\n');
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: FeedbackRequest = await request.json();
@@ -59,6 +72,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate value range (must be 0 or 1 for thumbs down/up)
+    if (value !== 0 && value !== 1) {
+      return NextResponse.json(
+        { error: 'Invalid value: must be 0 (negative) or 1 (positive)' },
+        { status: 400 }
+      );
+    }
+
+    // Sanitize string inputs to prevent log injection
+    const sanitizedUsername = sanitizeString(username);
+    const sanitizedProjectName = sanitizeString(projectName);
+    const sanitizedSessionName = sanitizeString(sessionName);
+    const sanitizedComment = comment ? sanitizeString(comment) : undefined;
+    const sanitizedWorkflow = workflow ? sanitizeString(workflow) : undefined;
+    const sanitizedContext = context ? sanitizeString(context) : undefined;
+    const sanitizedTraceId = traceId ? sanitizeString(traceId) : undefined;
+
     // Get Langfuse client (uses public key only)
     const langfuse = getLangfuseClient();
 
@@ -70,19 +100,26 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Sanitize transcript entries if provided
+    const sanitizedTranscript = transcript?.map(m => ({
+      role: sanitizeString(m.role),
+      content: sanitizeString(m.content),
+      timestamp: m.timestamp ? sanitizeString(m.timestamp) : undefined,
+    }));
+
     // Build the feedback comment (user-provided content only)
     const commentParts: string[] = [];
     
-    if (comment) {
-      commentParts.push(comment);
+    if (sanitizedComment) {
+      commentParts.push(sanitizedComment);
     }
     
-    if (context) {
-      commentParts.push(`\nMessage:\n${context}`);
+    if (sanitizedContext) {
+      commentParts.push(`\nMessage:\n${sanitizedContext}`);
     }
     
-    if (includeTranscript && transcript && transcript.length > 0) {
-      const transcriptText = transcript
+    if (includeTranscript && sanitizedTranscript && sanitizedTranscript.length > 0) {
+      const transcriptText = sanitizedTranscript
         .map(m => `[${m.role}]: ${m.content}`)
         .join('\n');
       commentParts.push(`\nFull Transcript:\n${transcriptText}`);
@@ -91,17 +128,17 @@ export async function POST(request: NextRequest) {
     const feedbackComment = commentParts.length > 0 ? commentParts.join('\n') : undefined;
 
     // Determine the traceId to use
-    const effectiveTraceId = traceId || `feedback-${sessionName}-${Date.now()}`;
+    const effectiveTraceId = sanitizedTraceId || `feedback-${sanitizedSessionName}-${Date.now()}`;
 
     // Build metadata with structured session info
     const metadata: Record<string, string> = {
-      project: projectName,
-      session: sessionName,
-      user: username,
+      project: sanitizedProjectName,
+      session: sanitizedSessionName,
+      user: sanitizedUsername,
     };
     
-    if (workflow) {
-      metadata.workflow = workflow;
+    if (sanitizedWorkflow) {
+      metadata.workflow = sanitizedWorkflow;
     }
 
     // Send feedback using LangfuseWeb SDK

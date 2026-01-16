@@ -67,39 +67,43 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Build the feedback comment with context
-    const feedbackParts: string[] = [];
+    // Build the feedback comment (user-provided content only)
+    const commentParts: string[] = [];
     
     if (comment) {
-      feedbackParts.push(`User Comment: ${comment}`);
+      commentParts.push(comment);
     }
     
-    feedbackParts.push(`Project: ${projectName}`);
-    feedbackParts.push(`Session: ${sessionName}`);
-    feedbackParts.push(`User: ${username}`);
-    
     if (context) {
-      feedbackParts.push(`Context: ${context}`);
+      commentParts.push(`Context: ${context}`);
     }
     
     if (includeTranscript && transcript && transcript.length > 0) {
       const transcriptText = transcript
         .map(m => `[${m.role}]: ${m.content}`)
         .join('\n');
-      feedbackParts.push(`\nFull Transcript:\n${transcriptText}`);
+      commentParts.push(`\nFull Transcript:\n${transcriptText}`);
     }
 
-    const fullComment = feedbackParts.join('\n');
+    const feedbackComment = commentParts.length > 0 ? commentParts.join('\n') : undefined;
 
     // Determine the traceId to use
     const effectiveTraceId = traceId || `feedback-${sessionName}-${Date.now()}`;
+
+    // Build metadata with structured session info
+    const metadata: Record<string, string> = {
+      project: projectName,
+      session: sessionName,
+      user: username,
+    };
 
     // Send feedback using LangfuseWeb SDK
     langfuse.score({
       traceId: effectiveTraceId,
       name: 'user-feedback',
       value: value,
-      comment: fullComment,
+      comment: feedbackComment,
+      metadata,
     });
 
     return NextResponse.json({ 

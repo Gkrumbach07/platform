@@ -80,13 +80,14 @@ export function FeedbackModal({
       const contextParts: string[] = [];
       
       if (feedbackContext.initialPrompt) {
-        contextParts.push(`Initial prompt: ${feedbackContext.initialPrompt.substring(0, 200)}`);
+        contextParts.push(`Initial prompt: ${feedbackContext.initialPrompt}`);
       }
       
       if (messageContent) {
-        contextParts.push(messageContent.substring(0, 500));
+        contextParts.push(messageContent);
       }
 
+      // Extract all messages for the transcript
       const transcript = includeTranscript
         ? extractMessageText(feedbackContext.messages)
         : undefined;

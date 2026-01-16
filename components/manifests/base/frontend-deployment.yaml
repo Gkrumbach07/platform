@@ -45,12 +45,6 @@ spec:
               name: ambient-admin-langfuse-secret
               key: LANGFUSE_PUBLIC_KEY
               optional: true
-        - name: LANGFUSE_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: ambient-admin-langfuse-secret
-              key: LANGFUSE_SECRET_KEY
-              optional: true
         resources:
           requests:
             cpu: 100m

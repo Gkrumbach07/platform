@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"regexp"
 	"time"
 
 	authv1 "k8s.io/api/authorization/v1"
@@ -12,6 +13,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 )
+
+// logSanitizeRegex matches control characters that could enable log injection
+// (newlines, carriage returns, null bytes, and other control characters)
+var logSanitizeRegex = regexp.MustCompile(`[\x00-\x1F\x7F]`)
+
+// SanitizeForLog removes control characters from a string to prevent log injection attacks.
+// This should be used when logging any user-supplied input (headers, query params, form data).
+func SanitizeForLog(input string) string {
+	return logSanitizeRegex.ReplaceAllString(input, "")
+}
 
 // GetProjectSettingsResource returns the GroupVersionResource for ProjectSettings
 func GetProjectSettingsResource() schema.GroupVersionResource {

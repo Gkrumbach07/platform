@@ -610,8 +610,9 @@ type FeedbackRequest struct {
 // POST /api/projects/:projectName/agentic-sessions/:sessionName/agui/feedback
 // See: https://docs.ag-ui.com/drafts/meta-events#user-feedback
 func HandleAGUIFeedback(c *gin.Context) {
-	projectName := c.Param("projectName")
-	sessionName := c.Param("sessionName")
+	// SECURITY: Sanitize URL path params to prevent log injection
+	projectName := handlers.SanitizeForLog(c.Param("projectName"))
+	sessionName := handlers.SanitizeForLog(c.Param("sessionName"))
 
 	// SECURITY: Authenticate user and get user-scoped K8s client
 	reqK8s, _ := handlers.GetK8sClientsForRequest(c)
@@ -643,7 +644,8 @@ func HandleAGUIFeedback(c *gin.Context) {
 	}
 
 	// Extract username from request (forwarded by auth proxy)
-	username := c.GetHeader("X-Forwarded-User")
+	// SECURITY: Sanitize to prevent log injection via control characters (newlines, etc.)
+	username := handlers.SanitizeForLog(c.GetHeader("X-Forwarded-User"))
 	if username == "" {
 		username = "unknown"
 	}
@@ -655,8 +657,9 @@ func HandleAGUIFeedback(c *gin.Context) {
 		return
 	}
 
+	// SECURITY: Sanitize user input before logging (FeedbackType is validated but sanitize for defense-in-depth)
 	log.Printf("AGUI Feedback: Received %s feedback from %s for session %s/%s",
-		input.FeedbackType, username, projectName, sessionName)
+		handlers.SanitizeForLog(input.FeedbackType), username, projectName, sessionName)
 
 	// Get runner endpoint
 	runnerURL, err := getRunnerEndpoint(projectName, sessionName)
@@ -741,7 +744,7 @@ func HandleAGUIFeedback(c *gin.Context) {
 		return
 	}
 
-	log.Printf("AGUI Feedback: Successfully sent %s feedback to runner", input.FeedbackType)
+	log.Printf("AGUI Feedback: Successfully sent %s feedback to runner", handlers.SanitizeForLog(input.FeedbackType))
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Feedback submitted successfully",
 		"status":  "sent",

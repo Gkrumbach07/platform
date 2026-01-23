@@ -48,13 +48,19 @@ echo ""
 echo "Creating kind cluster with ingress support..."
 
 # Use higher ports for Podman rootless compatibility (ports >= 1024)
-if [ "$CONTAINER_ENGINE" = "podman" ]; then
+# Can be overridden with KIND_HTTP_PORT environment variable
+if [ "${KIND_HTTP_PORT:-auto}" != "auto" ]; then
+  HTTP_PORT="${KIND_HTTP_PORT}"
+  HTTPS_PORT=$((HTTP_PORT + 363))  # 80->443 offset
+  echo "   ℹ️  Using custom ports ${HTTP_PORT}/${HTTPS_PORT} (KIND_HTTP_PORT=${KIND_HTTP_PORT})"
+elif [ "$CONTAINER_ENGINE" = "podman" ]; then
   HTTP_PORT=8080
   HTTPS_PORT=8443
   echo "   ℹ️  Using ports 8080/8443 (Podman rootless compatibility)"
 else
   HTTP_PORT=80
   HTTPS_PORT=443
+  echo "   ℹ️  Using ports 80/443 (Docker)"
 fi
 
 cat <<EOF | kind create cluster --name ambient-local --config=-

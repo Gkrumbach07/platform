@@ -19,6 +19,7 @@ BUILD_FLAGS ?=
 NAMESPACE ?= ambient-code
 REGISTRY ?= quay.io/your-org
 CI_MODE ?= false
+KIND_HTTP_PORT ?= auto
 
 # In CI we want full command output to diagnose failures. Locally we keep the Makefile quieter.
 # GitHub Actions sets CI=true by default; the workflow can also pass CI_MODE=true explicitly.
@@ -85,9 +86,12 @@ help: ## Display this help message
 	@echo '  CONTAINER_ENGINE=$(CONTAINER_ENGINE)  (docker or podman)'
 	@echo '  NAMESPACE=$(NAMESPACE)'
 	@echo '  PLATFORM=$(PLATFORM)'
+	@echo '  KIND_HTTP_PORT=$(KIND_HTTP_PORT)  (auto, 80, 8080, or custom port)'
 	@echo ''
 	@echo '$(COLOR_BOLD)Examples:$(COLOR_RESET)'
 	@echo '  make local-up CONTAINER_ENGINE=docker'
+	@echo '  make kind-up KIND_HTTP_PORT=80        # Force port 80'
+	@echo '  make kind-up KIND_HTTP_PORT=9000      # Custom port'
 	@echo '  make local-reload-backend'
 	@echo '  make build-all PLATFORM=linux/arm64'
 
@@ -598,7 +602,7 @@ clean: ## Clean up Kubernetes resources
 
 kind-up: ## Start kind cluster with Quay.io images (production-like)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Starting kind cluster..."
-	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) ./scripts/setup-kind.sh
+	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) KIND_HTTP_PORT=$(KIND_HTTP_PORT) ./scripts/setup-kind.sh
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for ingress admission webhook..."
 	@sleep 5
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Deploying with Quay.io images..."
@@ -608,7 +612,7 @@ kind-up: ## Start kind cluster with Quay.io images (production-like)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Initializing MinIO..."
 	@cd e2e && ./scripts/init-minio.sh
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Extracting test token..."
-	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) ./scripts/extract-token.sh
+	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) KIND_HTTP_PORT=$(KIND_HTTP_PORT) ./scripts/extract-token.sh
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Kind cluster ready!"
 	@echo ""
 	@echo "Access the platform:"
@@ -635,7 +639,7 @@ kind-refresh: ## Reload e2e/.env changes to running cluster (update images/secre
 
 kind-down: ## Stop and delete kind cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Cleaning up kind cluster..."
-	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) ./scripts/cleanup.sh
+	@cd e2e && CONTAINER_ENGINE=$(CONTAINER_ENGINE) KIND_HTTP_PORT=$(KIND_HTTP_PORT) ./scripts/cleanup.sh
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Kind cluster deleted"
 
 ##@ E2E Testing (Portable)

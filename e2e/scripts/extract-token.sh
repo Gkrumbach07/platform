@@ -33,12 +33,19 @@ if [ -z "$CONTAINER_ENGINE" ]; then
 fi
 
 # Detect which port to use
-HTTP_PORT=80
-if kind get clusters 2>/dev/null | grep -q "^ambient-local$"; then
+if [ "${KIND_HTTP_PORT:-auto}" != "auto" ]; then
+  # Use explicit port from environment
+  HTTP_PORT="${KIND_HTTP_PORT}"
+elif kind get clusters 2>/dev/null | grep -q "^ambient-local$"; then
+  # Auto-detect from container ports
   if docker ps --filter "name=ambient-local-control-plane" --format "{{.Ports}}" 2>/dev/null | grep -q "8080" || \
      podman ps --filter "name=ambient-local-control-plane" --format "{{.Ports}}" 2>/dev/null | grep -q "8080"; then
     HTTP_PORT=8080
+  else
+    HTTP_PORT=80
   fi
+else
+  HTTP_PORT=80
 fi
 
 # Use localhost instead of custom hostname

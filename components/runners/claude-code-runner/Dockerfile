@@ -1,20 +1,5 @@
 FROM registry.access.redhat.com/ubi9/python-311@sha256:d0b35f779ca0ae87deaf17cd1923461904f52d3ef249a53dbd487e02bdabdde6
 
-# Build arguments for metadata
-ARG GIT_COMMIT=unknown
-ARG GIT_BRANCH=unknown
-ARG GIT_REPO=unknown
-ARG GIT_VERSION=unknown
-ARG BUILD_DATE=unknown
-ARG BUILD_USER=unknown
-
-# Add labels to force cache invalidation and provide metadata
-LABEL git.commit="${GIT_COMMIT}"
-LABEL git.branch="${GIT_BRANCH}"
-LABEL git.version="${GIT_VERSION}"
-LABEL build.date="${BUILD_DATE}"
-LABEL build.user="${BUILD_USER}"
-
 USER 0
 
 # Add GitHub CLI repository and install packages
@@ -45,14 +30,6 @@ ENV HOME=/app
 ENV SHELL=/bin/bash
 ENV TERM=xterm-256color
 ENV AGUI_PORT=8001
-
-# Build metadata as environment variables
-ENV GIT_COMMIT=${GIT_COMMIT}
-ENV GIT_BRANCH=${GIT_BRANCH}
-ENV GIT_REPO=${GIT_REPO}
-ENV GIT_VERSION=${GIT_VERSION}
-ENV BUILD_DATE=${BUILD_DATE}
-ENV BUILD_USER=${BUILD_USER}
 
 # Set umask to make files readable by other containers (fixes content service access)
 # 0022 creates files as rw-r--r-- (644) instead of default rw------- (600)

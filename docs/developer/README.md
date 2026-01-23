@@ -27,7 +27,7 @@ Welcome to the Ambient Code Platform developer guide! This section covers everyt
    
    **Full guide:** [Kind Development](local-development/kind.md)
    
-   **Alternatives:** [Minikube](../../QUICK_START.md) (older) • [CRC](local-development/crc.md) (OpenShift-specific) • [Comparison](local-development/)
+   **Alternatives:** [Minikube](local-development/minikube.md) (older) • [CRC](local-development/crc.md) (OpenShift-specific) • [Comparison](local-development/)
 
 3. **Make your changes and test:**
    ```bash

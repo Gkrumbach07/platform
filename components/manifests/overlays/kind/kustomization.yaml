@@ -12,7 +12,6 @@ resources:
 # backend-ingress removed - all traffic goes through frontend (Next.js proxies to backend)
 - operator-config.yaml
 - minio-credentials.yaml
-- runner-secrets.yaml
 
 # Patches for e2e environment
 patches:

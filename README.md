@@ -26,7 +26,7 @@ make kind-up
 
 **Full guide:** [Kind Local Development](docs/developer/local-development/kind.md)
 
-**Alternative approaches:** [Minikube](QUICK_START.md) (older) • [CRC](docs/developer/local-development/crc.md) (OpenShift-specific)
+**Alternative approaches:** [Minikube](docs/developer/local-development/minikube.md) (older) • [CRC](docs/developer/local-development/crc.md) (OpenShift-specific)
 
 ## Architecture
 
@@ -56,7 +56,7 @@ The platform consists of containerized microservices orchestrated via Kubernetes
 ### Local Development
 - ⚡ **[Kind Development](docs/developer/local-development/kind.md)** - **Recommended** (fastest, used in CI/CD)
 - 🔄 **[Local Development Options](docs/developer/local-development/)** - Kind vs Minikube vs CRC
-- 📦 **[Minikube Setup](QUICK_START.md)** - Older approach (still supported)
+- 📦 **[Minikube Setup](docs/developer/local-development/minikube.md)** - Older approach (still supported)
 - 🔴 **[CRC Setup](docs/developer/local-development/crc.md)** - For OpenShift-specific features
 
 ### Integrations

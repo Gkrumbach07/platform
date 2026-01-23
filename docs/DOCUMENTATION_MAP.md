@@ -7,7 +7,7 @@ Quick reference guide to find documentation in the Ambient Code Platform reposit
 ### Getting Started
 | What You Need | Where to Look |
 |---------------|---------------|
-| **First time setup** | [QUICK_START.md](../QUICK_START.md) |
+| **First time setup** | [QUICK_START.md](../QUICK_START.md) (Kind - 2 min) |
 | **Contributing** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | **Project overview** | [README.md](../README.md) |
 | **Development standards** | [CLAUDE.md](../CLAUDE.md) |
@@ -16,7 +16,7 @@ Quick reference guide to find documentation in the Ambient Code Platform reposit
 | What You Need | Where to Look |
 |---------------|---------------|
 | **Choose local env** | [developer/local-development/](developer/local-development/) |
-| **Minikube setup** | [QUICK_START.md](../QUICK_START.md) |
+| **Minikube setup** | [developer/local-development/minikube.md](developer/local-development/minikube.md) |
 | **Kind setup** | [developer/local-development/kind.md](developer/local-development/kind.md) |
 | **CRC setup** | [developer/local-development/crc.md](developer/local-development/crc.md) |
 | **Hybrid dev** | [developer/local-development/hybrid.md](developer/local-development/hybrid.md) |
@@ -100,7 +100,7 @@ Quick reference guide to find documentation in the Ambient Code Platform reposit
 ## 🎯 Common Scenarios
 
 ### "I want to run the platform locally"
-→ [QUICK_START.md](../QUICK_START.md) (Minikube, 5 minutes)
+→ [QUICK_START.md](../QUICK_START.md) (Kind, 2 minutes)
 
 ### "I want to write E2E tests"
 → [developer/local-development/kind.md](developer/local-development/kind.md) (Kind setup)
@@ -131,7 +131,7 @@ Quick reference guide to find documentation in the Ambient Code Platform reposit
 ```
 /
 ├── README.md                          # Navigation hub (111 lines)
-├── QUICK_START.md                     # 5-minute Minikube setup
+├── QUICK_START.md                     # 2-minute Kind setup
 ├── CONTRIBUTING.md                    # Contribution guidelines
 ├── CLAUDE.md                          # AI assistant development standards
 ├── AMBER_SETUP.md                     # Amber configuration (for agent)

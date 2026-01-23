@@ -60,7 +60,7 @@ make local-up
 # Access at http://$(minikube ip):30030
 ```
 
-**Full Guide:** [QUICK_START.md](../../../QUICK_START.md) in repository root
+**Full Guide:** [minikube.md](minikube.md)
 
 ---
 
@@ -240,7 +240,8 @@ cd components/backend && go run .
 
 ## Additional Resources
 
-- [Minikube Quick Start](../../../QUICK_START.md) - 5-minute setup
+- [Kind Quick Start](../../../QUICK_START.md) - 2-minute setup
+- [Minikube Setup](minikube.md) - Older approach (deprecated)
 - [Kind Development Guide](kind.md) - Using Kind for development and testing
 - [CRC Development Guide](crc.md) - OpenShift Local development
 - [Hybrid Development Guide](hybrid.md) - Running components locally

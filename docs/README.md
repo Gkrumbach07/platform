@@ -57,7 +57,7 @@ Welcome to the Ambient Code Platform documentation! This site provides comprehen
 - Need to deploy? → [Deployment Guide](OPENSHIFT_DEPLOY.md)
 
 ### Development
-- Local setup → [Quick Start](../QUICK_START.md)
+- Local setup → [Quick Start](../QUICK_START.md) (Kind, 2 min)
 - Running tests → [Testing Guide](testing/)
 - Code patterns → [CLAUDE.md](../CLAUDE.md)
 

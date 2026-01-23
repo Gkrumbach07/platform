@@ -641,64 +641,22 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	// Only check for runner secrets when Vertex is disabled
 	// When Vertex is enabled, ambient-vertex secret is used instead
 	if !vertexEnabled {
-		_, err := config.K8sClient.CoreV1().Secrets(sessionNamespace).Get(context.TODO(), runnerSecretsName, v1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				// Secret doesn't exist in session namespace - try to copy from operator namespace
-				log.Printf("Runner secret %s not found in %s, checking operator namespace %s", runnerSecretsName, sessionNamespace, operatorNamespace)
-				if adminRunnerSecret, adminErr := config.K8sClient.CoreV1().Secrets(operatorNamespace).Get(context.TODO(), runnerSecretsName, v1.GetOptions{}); adminErr == nil {
-					// Found in operator namespace - copy it
-					log.Printf("Found %s in operator namespace %s, copying to %s", runnerSecretsName, operatorNamespace, sessionNamespace)
-					copyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					if copyErr := copySecretToNamespace(copyCtx, adminRunnerSecret, sessionNamespace, currentObj); copyErr != nil {
-						log.Printf("Failed to copy runner secret from operator namespace: %v", copyErr)
-						statusPatch.AddCondition(conditionUpdate{
-							Type:    conditionSecretsReady,
-							Status:  "False",
-							Reason:  "RunnerSecretCopyFailed",
-							Message: fmt.Sprintf("Failed to copy %s from operator namespace: %v", runnerSecretsName, copyErr),
-						})
-						_ = statusPatch.Apply()
-						return fmt.Errorf("failed to copy runner secret %s from operator namespace to %s: %w", runnerSecretsName, sessionNamespace, copyErr)
-					}
-					log.Printf("Successfully copied runner secret %s to %s", runnerSecretsName, sessionNamespace)
-				} else if errors.IsNotFound(adminErr) {
-					// Not in operator namespace either - user hasn't configured it
-					log.Printf("Runner secret %s missing in both %s and operator namespace %s (Vertex disabled)", runnerSecretsName, sessionNamespace, operatorNamespace)
-					statusPatch.AddCondition(conditionUpdate{
-						Type:    conditionSecretsReady,
-						Status:  "False",
-						Reason:  "RunnerSecretMissing",
-						Message: fmt.Sprintf("Secret %s missing - configure via Project Settings or create in operator namespace", runnerSecretsName),
-					})
-					_ = statusPatch.Apply()
-					return fmt.Errorf("runner secret %s missing in namespace %s (and operator namespace)", runnerSecretsName, sessionNamespace)
-				} else {
-					log.Printf("Error checking runner secret in operator namespace: %v", adminErr)
-					statusPatch.AddCondition(conditionUpdate{
-						Type:    conditionSecretsReady,
-						Status:  "False",
-						Reason:  "RunnerSecretCheckFailed",
-						Message: fmt.Sprintf("Error checking %s: %v", runnerSecretsName, adminErr),
-					})
-					_ = statusPatch.Apply()
-					return fmt.Errorf("error checking runner secret %s in operator namespace: %w", runnerSecretsName, adminErr)
-				}
-			} else {
+		if _, err := config.K8sClient.CoreV1().Secrets(sessionNamespace).Get(context.TODO(), runnerSecretsName, v1.GetOptions{}); err != nil {
+			if !errors.IsNotFound(err) {
 				log.Printf("Error checking runner secret %s: %v", runnerSecretsName, err)
-				statusPatch.AddCondition(conditionUpdate{
-					Type:    conditionSecretsReady,
-					Status:  "False",
-					Reason:  "RunnerSecretCheckFailed",
-					Message: fmt.Sprintf("Error checking %s: %v", runnerSecretsName, err),
-				})
-				_ = statusPatch.Apply()
-				return fmt.Errorf("error checking runner secret %s in namespace %s: %w", runnerSecretsName, sessionNamespace, err)
+			} else {
+				log.Printf("Runner secret %s missing in %s (Vertex disabled)", runnerSecretsName, sessionNamespace)
 			}
-		} else {
-			log.Printf("Found runner secret %s in %s (Vertex disabled)", runnerSecretsName, sessionNamespace)
+			statusPatch.AddCondition(conditionUpdate{
+				Type:    conditionSecretsReady,
+				Status:  "False",
+				Reason:  "RunnerSecretMissing",
+				Message: fmt.Sprintf("Secret %s missing", runnerSecretsName),
+			})
+			_ = statusPatch.Apply()
+			return fmt.Errorf("runner secret %s missing in namespace %s", runnerSecretsName, sessionNamespace)
 		}
+		log.Printf("Found runner secret %s in %s (Vertex disabled)", runnerSecretsName, sessionNamespace)
 	} else {
 		log.Printf("Vertex AI enabled, skipping runner secret %s validation", runnerSecretsName)
 	}

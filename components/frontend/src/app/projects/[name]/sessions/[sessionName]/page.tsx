@@ -1269,19 +1269,8 @@ export default function ProjectSessionDetailPage({
   // LEGACY: Old handleInterrupt removed - now using aguiInterrupt from useAGUIStream
   // which calls the proper AG-UI interrupt endpoint that signals Claude SDK
 
-  const handleEndSession = () => {
-    // Use stop API to end the session
-    stopMutation.mutate(
-      { projectName, sessionName, data: { reason: "end_session" } },
-      {
-        onSuccess: () => successToast("Session ended successfully"),
-        onError: (err) =>
-          errorToast(
-            err instanceof Error ? err.message : "Failed to end session",
-          ),
-      },
-    );
-  };
+  // Duration calculation removed - startTime/completionTime no longer in status
+  const durationMs = undefined;
 
   // Loading state
   if (isLoading || !projectName || !sessionName) {
@@ -1980,7 +1969,6 @@ export default function ProjectSessionDetailPage({
                         setChatInput={setChatInput}
                         onSendChat={() => Promise.resolve(sendChat())}
                         onInterrupt={aguiInterrupt}
-                        onEndSession={() => Promise.resolve(handleEndSession())}
                         onGoToResults={() => {}}
                         onContinue={handleContinue}
                         workflowMetadata={workflowMetadata}

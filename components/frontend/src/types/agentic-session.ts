@@ -102,7 +102,7 @@ export type HierarchicalToolMessage = ToolUseMessages & {
 // -----------------------------
 // Message Types
 // -----------------------------
-export type Message = UserMessage | AgentMessage | SystemMessage | ResultMessage | ToolUseMessages | AgentRunningMessage | AgentWaitingMessage;
+export type Message = UserMessage | AgentMessage | SystemMessage | ResultMessage | ToolUseMessages | AgentRunningMessage | AgentWaitingMessage | DeveloperMessage | SystemRoleMessage;
 
 export type AgentRunningMessage = {
 	type: "agent_running";
@@ -117,18 +117,34 @@ export type UserMessage = {
 	type: "user_message";
 	content: ContentBlock | string;
 	timestamp: string;
+	role?: "user"; // AG-UI role field
 }
 export type AgentMessage = {
 	type: "agent_message";
 	content: ContentBlock;
 	model: string;
 	timestamp: string;
+	role?: "assistant"; // AG-UI role field
 }
+// Legacy system_message type (for compatibility)
 export type SystemMessage = {
 	type: "system_message";
 	subtype: string;
 	data: Record<string, unknown>;
 	timestamp: string;
+}
+// New AG-UI role-based messages
+export type DeveloperMessage = {
+	type: "user_message" | "agent_message";
+	content: ContentBlock | string;
+	timestamp: string;
+	role: "developer"; // Platform/internal logging
+}
+export type SystemRoleMessage = {
+	type: "user_message" | "agent_message";
+	content: ContentBlock | string;
+	timestamp: string;
+	role: "system"; // Claude system messages (turn info, etc)
 }
 export type ResultMessage = {
 	type: "result_message";

@@ -63,14 +63,36 @@ export const StreamMessage: React.FC<StreamMessageProps> = ({ message, onGoToRes
     case "user_message":
     case "agent_message": {
       const isStreaming = 'streaming' in message && message.streaming;
+
+      // Check for AG-UI role field
+      const role = 'role' in m ? m.role : undefined;
+
+      // Determine display role based on AG-UI role
+      let displayRole: "user" | "bot" | "system" = "user";
+      let displayName = "You";
+
+      if (role === "assistant" || (m.type === "agent_message" && !role)) {
+        displayRole = "bot";
+        displayName = "Claude AI";
+      } else if (role === "developer") {
+        displayRole = "system";
+        displayName = "Platform";
+      } else if (role === "system") {
+        displayRole = "system";
+        displayName = "System";
+      } else if (role === "user" || m.type === "user_message") {
+        displayRole = "user";
+        displayName = "You";
+      }
+
       if (typeof m.content === "string") {
-        return <Message role={m.type === "agent_message" ? "bot" : "user"} content={m.content} name="Claude AI" borderless={plainCard} timestamp={m.timestamp} streaming={isStreaming}/>;
+        return <Message role={displayRole} content={m.content} name={displayName} borderless={plainCard} timestamp={m.timestamp} streaming={isStreaming}/>;
       }
       switch (m.content.type) {
         case "thinking_block":
           return <ThinkingMessage block={m.content} />
         case "text_block":
-          return <Message role={m.type === "agent_message" ? "bot" : "user"} content={m.content.text} name="Claude AI" borderless={plainCard} timestamp={m.timestamp} streaming={isStreaming}/>
+          return <Message role={displayRole} content={m.content.text} name={displayName} borderless={plainCard} timestamp={m.timestamp} streaming={isStreaming}/>
         case "tool_use_block":
           return <ToolMessage toolUseBlock={m.content} borderless={plainCard}/>
         case "tool_result_block":

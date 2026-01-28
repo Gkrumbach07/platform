@@ -107,6 +107,32 @@ class ClaudeCodeAdapter:
         """Return current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
 
+    async def _emit_developer_message(
+        self, message: str, thread_id: str, run_id: str
+    ) -> AsyncIterator[BaseEvent]:
+        """Helper to emit a developer role message (platform logging)."""
+        msg_id = str(uuid.uuid4())
+        yield TextMessageStartEvent(
+            type=EventType.TEXT_MESSAGE_START,
+            thread_id=thread_id,
+            run_id=run_id,
+            message_id=msg_id,
+            role="developer",
+        )
+        yield TextMessageContentEvent(
+            type=EventType.TEXT_MESSAGE_CONTENT,
+            thread_id=thread_id,
+            run_id=run_id,
+            message_id=msg_id,
+            delta=message,
+        )
+        yield TextMessageEndEvent(
+            type=EventType.TEXT_MESSAGE_END,
+            thread_id=thread_id,
+            run_id=run_id,
+            message_id=msg_id,
+        )
+
     async def process_run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """
         Process a run and yield AG-UI events.
@@ -199,11 +225,27 @@ class ClaudeCodeAdapter:
             
             if not user_message:
                 logger.warning("No user message found in input")
-                yield RawEvent(
-                    type=EventType.RAW,
+                # Emit as developer message (platform logging)
+                msg_id = str(uuid.uuid4())
+                yield TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
                     thread_id=thread_id,
                     run_id=run_id,
-                    event={"type": "system_log", "message": "No user message provided"}
+                    message_id=msg_id,
+                    role="developer",
+                )
+                yield TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    message_id=msg_id,
+                    delta="No user message provided",
+                )
+                yield TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    message_id=msg_id,
                 )
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
@@ -431,11 +473,27 @@ class ClaudeCodeAdapter:
                 try:
                     options.continue_conversation = True
                     logger.info("Enabled continue_conversation for session resumption")
-                    yield RawEvent(
-                        type=EventType.RAW,
+                    # Emit as developer message (platform logging)
+                    msg_id = str(uuid.uuid4())
+                    yield TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
                         thread_id=thread_id,
                         run_id=run_id,
-                        event={"type": "system_log", "message": "🔄 Continuing conversation from previous state"}
+                        message_id=msg_id,
+                        role="developer",
+                    )
+                    yield TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
+                        delta="🔄 Continuing conversation from previous state",
+                    )
+                    yield TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to set continue_conversation: {e}")
@@ -492,11 +550,27 @@ class ClaudeCodeAdapter:
                 error_str = str(resume_error).lower()
                 if "no conversation found" in error_str or "session" in error_str:
                     logger.warning(f"Conversation continuation failed: {resume_error}")
-                    yield RawEvent(
-                        type=EventType.RAW,
+                    # Emit as developer message (platform logging)
+                    msg_id = str(uuid.uuid4())
+                    yield TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
                         thread_id=thread_id,
                         run_id=run_id,
-                        event={"type": "system_log", "message": "⚠️ Could not continue conversation, starting fresh..."}
+                        message_id=msg_id,
+                        role="developer",
+                    )
+                    yield TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
+                        delta="⚠️ Could not continue conversation, starting fresh...",
+                    )
+                    yield TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
                     )
                     client = create_sdk_client(options, disable_continue=True)
                     await client.connect()
@@ -506,13 +580,29 @@ class ClaudeCodeAdapter:
             try:
                 # Store client reference for interrupt support
                 self._active_client = client
-                
+
                 if not self._first_run:
-                    yield RawEvent(
-                        type=EventType.RAW,
+                    # Emit as developer message (platform logging)
+                    msg_id = str(uuid.uuid4())
+                    yield TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
                         thread_id=thread_id,
                         run_id=run_id,
-                        event={"type": "system_log", "message": "✅ Continuing conversation"}
+                        message_id=msg_id,
+                        role="developer",
+                    )
+                    yield TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
+                        delta="✅ Continuing conversation",
+                    )
+                    yield TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message_id=msg_id,
                     )
                     logger.info("SDK continuing conversation from local state")
 
@@ -927,30 +1017,30 @@ class ClaudeCodeAdapter:
 
         try:
             if not workspace_has_git:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "📥 Cloning input repository..."}
-                )
+                async for event in self._emit_developer_message(
+                    "📥 Cloning input repository...",
+                    self._current_thread_id or self.context.session_id,
+                    self._current_run_id or "init"
+                ):
+                    yield event
                 clone_url = self._url_with_token(input_repo, token) if token else input_repo
                 await self._run_cmd(["git", "clone", "--branch", input_branch, "--single-branch", clone_url, str(workspace)], cwd=str(workspace.parent))
                 await self._run_cmd(["git", "remote", "set-url", "origin", clone_url], cwd=str(workspace), ignore_errors=True)
             elif reusing_workspace:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "✓ Preserving workspace (continuation)"}
-                )
+                async for event in self._emit_developer_message(
+                    "✓ Preserving workspace (continuation)",
+                    self._current_thread_id or self.context.session_id,
+                    self._current_run_id or "init"
+                ):
+                    yield event
                 await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(input_repo, token) if token else input_repo], cwd=str(workspace), ignore_errors=True)
             else:
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": "🔄 Resetting workspace to clean state"}
-                )
+                async for event in self._emit_developer_message(
+                    "🔄 Resetting workspace to clean state",
+                    self._current_thread_id or self.context.session_id,
+                    self._current_run_id or "init"
+                ):
+                    yield event
                 await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(input_repo, token) if token else input_repo], cwd=str(workspace))
                 await self._run_cmd(["git", "fetch", "origin", input_branch], cwd=str(workspace))
                 await self._run_cmd(["git", "checkout", input_branch], cwd=str(workspace))
@@ -969,12 +1059,12 @@ class ClaudeCodeAdapter:
 
         except Exception as e:
             logger.error(f"Failed to prepare workspace: {e}")
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"Workspace preparation failed: {e}"}
-            )
+            async for event in self._emit_developer_message(
+                f"Workspace preparation failed: {e}",
+                self._current_thread_id or self.context.session_id,
+                self._current_run_id or "init"
+            ):
+                yield event
 
         # Create artifacts directory
         try:
@@ -1001,30 +1091,30 @@ class ClaudeCodeAdapter:
                 repo_exists = repo_dir.exists() and (repo_dir / ".git").exists()
 
                 if not repo_exists:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"📥 Cloning {name}..."}
-                    )
+                    async for event in self._emit_developer_message(
+                        f"📥 Cloning {name}...",
+                        self._current_thread_id or self.context.session_id,
+                        self._current_run_id or "init"
+                    ):
+                        yield event
                     clone_url = self._url_with_token(url, token) if token else url
                     await self._run_cmd(["git", "clone", "--branch", branch, "--single-branch", clone_url, str(repo_dir)], cwd=str(workspace))
                     await self._run_cmd(["git", "remote", "set-url", "origin", clone_url], cwd=str(repo_dir), ignore_errors=True)
                 elif reusing_workspace:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"✓ Preserving {name} (continuation)"}
-                    )
+                    async for event in self._emit_developer_message(
+                        f"✓ Preserving {name} (continuation)",
+                        self._current_thread_id or self.context.session_id,
+                        self._current_run_id or "init"
+                    ):
+                        yield event
                     await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(url, token) if token else url], cwd=str(repo_dir), ignore_errors=True)
                 else:
-                    yield RawEvent(
-                        type=EventType.RAW,
-                        thread_id=self._current_thread_id or self.context.session_id,
-                        run_id=self._current_run_id or "init",
-                        event={"type": "system_log", "message": f"🔄 Resetting {name} to clean state"}
-                    )
+                    async for event in self._emit_developer_message(
+                        f"🔄 Resetting {name} to clean state",
+                        self._current_thread_id or self.context.session_id,
+                        self._current_run_id or "init"
+                    ):
+                        yield event
                     await self._run_cmd(["git", "remote", "set-url", "origin", self._url_with_token(url, token) if token else url], cwd=str(repo_dir), ignore_errors=True)
                     await self._run_cmd(["git", "fetch", "origin", branch], cwd=str(repo_dir))
                     await self._run_cmd(["git", "checkout", branch], cwd=str(repo_dir))
@@ -1046,12 +1136,12 @@ class ClaudeCodeAdapter:
 
         except Exception as e:
             logger.error(f"Failed to prepare multi-repo workspace: {e}")
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"Workspace preparation failed: {e}"}
-            )
+            async for event in self._emit_developer_message(
+                f"Workspace preparation failed: {e}",
+                self._current_thread_id or self.context.session_id,
+                self._current_run_id or "init"
+            ):
+                yield event
 
     async def _validate_prerequisites(self):
         """Validate prerequisite files exist for phase-based slash commands."""
@@ -1130,22 +1220,22 @@ class ClaudeCodeAdapter:
         temp_clone_dir = workspace / "workflows" / f"{workflow_name}-clone-temp"
 
         if workflow_dir.exists():
-            yield RawEvent(
-                type=EventType.RAW,
-                thread_id=self._current_thread_id or self.context.session_id,
-                run_id=self._current_run_id or "init",
-                event={"type": "system_log", "message": f"✓ Workflow {workflow_name} already loaded"}
-            )
+            async for event in self._emit_developer_message(
+                f"✓ Workflow {workflow_name} already loaded",
+                self._current_thread_id or self.context.session_id,
+                self._current_run_id or "init"
+            ):
+                yield event
             return
 
         token = await self._fetch_token_for_url(git_url)
 
-        yield RawEvent(
-            type=EventType.RAW,
-            thread_id=self._current_thread_id or self.context.session_id,
-            run_id=self._current_run_id or "init",
-            event={"type": "system_log", "message": f"📥 Cloning workflow {workflow_name}..."}
-        )
+        async for event in self._emit_developer_message(
+            f"📥 Cloning workflow {workflow_name}...",
+            self._current_thread_id or self.context.session_id,
+            self._current_run_id or "init"
+        ):
+            yield event
 
         clone_url = self._url_with_token(git_url, token) if token else git_url
         await self._run_cmd(["git", "clone", "--branch", branch, "--single-branch", clone_url, str(temp_clone_dir)], cwd=str(workspace))
@@ -1155,29 +1245,29 @@ class ClaudeCodeAdapter:
             if subdir_path.exists() and subdir_path.is_dir():
                 shutil.copytree(subdir_path, workflow_dir)
                 shutil.rmtree(temp_clone_dir)
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": f"✓ Extracted workflow from: {path}"}
-                )
+                async for event in self._emit_developer_message(
+                    f"✓ Extracted workflow from: {path}",
+                    self._current_thread_id or self.context.session_id,
+                    self._current_run_id or "init"
+                ):
+                    yield event
             else:
                 temp_clone_dir.rename(workflow_dir)
-                yield RawEvent(
-                    type=EventType.RAW,
-                    thread_id=self._current_thread_id or self.context.session_id,
-                    run_id=self._current_run_id or "init",
-                    event={"type": "system_log", "message": f"⚠️ Path '{path}' not found, using full repository"}
-                )
+                async for event in self._emit_developer_message(
+                    f"⚠️ Path '{path}' not found, using full repository",
+                    self._current_thread_id or self.context.session_id,
+                    self._current_run_id or "init"
+                ):
+                    yield event
         else:
             temp_clone_dir.rename(workflow_dir)
 
-        yield RawEvent(
-            type=EventType.RAW,
-            thread_id=self._current_thread_id or self.context.session_id,
-            run_id=self._current_run_id or "init",
-            event={"type": "system_log", "message": f"✅ Workflow {workflow_name} ready"}
-        )
+        async for event in self._emit_developer_message(
+            f"✅ Workflow {workflow_name} ready",
+            self._current_thread_id or self.context.session_id,
+            self._current_run_id or "init"
+        ):
+            yield event
 
     async def _run_cmd(self, cmd, cwd=None, capture_stdout=False, ignore_errors=False):
         """Run a subprocess command asynchronously."""

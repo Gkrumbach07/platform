@@ -219,23 +219,30 @@ All 7 merged PRs are frontend-only changes. No backend or operator changes neede
 
 ---
 
-## Quick Build Commands (When Engines Running)
+## Quick Build Commands
 
 ```bash
 # In vTeam directory
+cd /Users/gkrumbac/Documents/vTeam
 git checkout testing/quick-wins-batch-2026-01-28
 
-# Build & push
+# Frontend build succeeds ✅
+cd components/frontend && npm run build
+
+# Build & push container image
+cd /Users/gkrumbac/Documents/vTeam
 make build-frontend CONTAINER_ENGINE=podman REGISTRY=quay.io/gkrumbach07 PLATFORM=linux/amd64
 make push-frontend CONTAINER_ENGINE=podman REGISTRY=quay.io/gkrumbach07
 
-# Deploy
+# Deploy to dev cluster
 oc rollout restart deployment/frontend -n ambient-code
 oc rollout status deployment/frontend -n ambient-code
 
 # Test using browser at:
 # https://ambient-code.apps.gkrumbac.dev.datahub.redhat.com
 ```
+
+**Note:** All TypeScript lint errors have been fixed. Build passes cleanly.
 
 ---
 

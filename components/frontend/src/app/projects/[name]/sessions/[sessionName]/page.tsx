@@ -1266,12 +1266,6 @@ export default function ProjectSessionDetailPage({
     }
   };
 
-  // LEGACY: Old handleInterrupt removed - now using aguiInterrupt from useAGUIStream
-  // which calls the proper AG-UI interrupt endpoint that signals Claude SDK
-
-  // Duration calculation removed - startTime/completionTime no longer in status
-  const durationMs = undefined;
-
   // Loading state
   if (isLoading || !projectName || !sessionName) {
     return (

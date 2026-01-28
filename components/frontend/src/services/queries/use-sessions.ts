@@ -240,11 +240,12 @@ export function useDeleteSession() {
           previousQueries.set(JSON.stringify(queryKey), data);
 
           // Update paginated list queries
-          if ('items' in data && Array.isArray(data.items)) {
+          if (typeof data === 'object' && data !== null && 'items' in data && Array.isArray(data.items)) {
+            const paginatedData = data as { items: AgenticSession[]; totalCount?: number; [key: string]: unknown };
             queryClient.setQueryData(queryKey, {
-              ...data,
-              items: data.items.filter((s: AgenticSession) => s.metadata.name !== sessionName),
-              totalCount: data.totalCount ? data.totalCount - 1 : 0,
+              ...paginatedData,
+              items: paginatedData.items.filter((s: AgenticSession) => s.metadata.name !== sessionName),
+              totalCount: paginatedData.totalCount ? paginatedData.totalCount - 1 : 0,
             });
           }
           // Update non-paginated list queries (legacy)
@@ -259,7 +260,7 @@ export function useDeleteSession() {
 
       return { previousQueries };
     },
-    onError: (_err, { projectName }, context) => {
+    onError: (_err, _variables, context) => {
       // Rollback on error - restore all previous query data
       if (context?.previousQueries) {
         context.previousQueries.forEach((data, keyStr) => {

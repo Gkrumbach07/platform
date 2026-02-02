@@ -325,8 +325,8 @@ class ClaudeCodeAdapter:
             f"_run_claude_agent_sdk called with prompt length={len(prompt)}, will create fresh client"
         )
         try:
-            # Refresh Google credentials before each run (picks up newly authenticated creds)
-            await self.refresh_google_credentials()
+            # NOTE: Credentials are now fetched at runtime via _populate_runtime_credentials()
+            # No need for manual refresh - backend API always returns fresh tokens
 
             # Check for authentication method
             logger.info("Checking authentication configuration...")

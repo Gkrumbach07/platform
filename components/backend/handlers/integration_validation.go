@@ -66,6 +66,8 @@ func ValidateGitLabToken(ctx context.Context, token, instanceURL string) (bool, 
 }
 
 // ValidateJiraToken checks if Jira credentials are valid
+// Uses /rest/auth/1/session endpoint per Jira Server REST API docs:
+// https://docs.atlassian.com/software/jira/docs/api/REST/9.12.0/#auth/1/session-currentUser
 func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, error) {
 	if url == "" || email == "" || apiToken == "" {
 		return false, fmt.Errorf("missing required credentials")
@@ -73,59 +75,38 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	// Try API v3 first (Jira Cloud), fallback to v2 (Jira Server/DC)
-	apiURLs := []string{
-		fmt.Sprintf("%s/rest/api/3/myself", url),
-		fmt.Sprintf("%s/rest/api/2/myself", url),
+	// Use auth session endpoint - works for both Cloud and Server
+	// Per docs: Returns 200 if authenticated, 401 if not
+	authURL := fmt.Sprintf("%s/rest/auth/1/session", url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", authURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create request")
 	}
 
-	var lastErr error
-	var got401 bool
+	// Jira uses Basic Auth with email:token
+	req.SetBasicAuth(email, apiToken)
+	req.Header.Set("Accept", "application/json")
 
-	for _, apiURL := range apiURLs {
-		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		// Jira uses Basic Auth with email:token
-		req.SetBasicAuth(email, apiToken)
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			// Try next API version
-			continue
-		}
-		defer resp.Body.Close()
-
-		// 200 = valid, 401 = invalid/expired, 404 = wrong API version (try next)
-		if resp.StatusCode == http.StatusOK {
-			return true, nil
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			got401 = true
-			// Don't return yet - might be wrong API version, try next
-			continue
-		}
-		// For 404 or other errors, try next API version
+	resp, err := client.Do(req)
+	if err != nil {
+		// Network error - assume valid to avoid false negatives
+		return true, nil
 	}
+	defer resp.Body.Close()
 
-	// If we got 401 on any attempt, credentials are definitely invalid
-	if got401 {
+	// 200 = valid and authenticated
+	// 401 = invalid credentials
+	// Other codes = assume valid (might be server config issue)
+	if resp.StatusCode == http.StatusOK {
+		return true, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
 		return false, nil
 	}
 
-	// If both API versions failed with network errors, return true but log warning
-	// This prevents false negatives for network issues
-	if lastErr != nil {
-		// Can't validate due to network issues - assume valid to avoid blocking users
-		return true, nil
-	}
-
-	// Both APIs returned non-200/non-401 (likely 404s) - credentials might be valid but API unreachable
+	// For other status codes (403, 404, 500, etc), assume valid
+	// to avoid false negatives from server configuration issues
 	return true, nil
 }
 

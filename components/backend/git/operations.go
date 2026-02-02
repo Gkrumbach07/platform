@@ -147,7 +147,7 @@ func GetGitLabToken(ctx context.Context, k8sClient kubernetes.Interface, project
 			type gitlabCredentials interface {
 				GetToken() string
 			}
-			if creds, ok := gitlabCreds.(gitlabCredentials); ok {
+			if creds, ok := gitlabCreds.(gitlabCredentials); ok && creds != nil {
 				token := creds.GetToken()
 				if token != "" {
 					log.Printf("Using cluster-level GitLab token for user %s", userID)

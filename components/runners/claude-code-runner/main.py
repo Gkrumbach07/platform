@@ -540,8 +540,9 @@ def _validate_google_token(user_creds: Dict[str, Any], user_email: str) -> tuple
     from datetime import datetime, timezone
 
     # Check for required fields and that they're non-empty
-    if not user_creds.get("access_token") or not user_creds.get("refresh_token"):
-        return False, "Google OAuth credentials incomplete - missing or empty tokens"
+    # Note: refresh_token not required - backend handles token refresh
+    if not user_creds.get("access_token"):
+        return False, "Google OAuth credentials incomplete - missing access token"
 
     # Check token expiry if available
     if "token_expiry" in user_creds and user_creds["token_expiry"]:
@@ -554,13 +555,9 @@ def _validate_google_token(user_creds: Dict[str, Any], user_email: str) -> tuple
 
         now = datetime.now(timezone.utc)
 
-        # If expired and no refresh token, authentication failed
-        if expiry <= now and not user_creds.get("refresh_token"):
-            return False, "Google OAuth token expired - re-authenticate"
-
-        # If expired but have refresh token, mark as needs refresh
+        # If expired, token needs refresh (backend handles this automatically)
         if expiry <= now:
-            return None, f"Google OAuth authenticated as {user_email} (token refresh needed)"
+            return None, f"Google OAuth authenticated as {user_email} (backend will refresh token)"
 
     # Valid credentials found
     return True, f"Google OAuth authenticated as {user_email}"

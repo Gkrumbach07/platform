@@ -1445,11 +1445,12 @@ class ClaudeCodeAdapter:
             Dictionary with credential data or empty dict if unavailable
         """
         base = os.getenv("BACKEND_API_URL", "").rstrip("/")
-        project = os.getenv("PROJECT_NAME", "").strip()
+        project = os.getenv("PROJECT_NAME") or os.getenv("AGENTIC_SESSION_NAMESPACE", "")
+        project = project.strip()
         session_id = self.context.session_id
 
         if not base or not project or not session_id:
-            logger.warning(f"Cannot fetch {credential_type} credentials: missing environment variables")
+            logger.warning(f"Cannot fetch {credential_type} credentials: missing environment variables (base={base}, project={project}, session={session_id})")
             return {}
 
         url = f"{base}/projects/{project}/agentic-sessions/{session_id}/credentials/{credential_type}"
@@ -1516,7 +1517,8 @@ class ClaudeCodeAdapter:
         """Legacy method - kept for backward compatibility."""
         # Build mint URL from environment
         base = os.getenv("BACKEND_API_URL", "").rstrip("/")
-        project = os.getenv("PROJECT_NAME", "").strip()
+        project = os.getenv("PROJECT_NAME") or os.getenv("AGENTIC_SESSION_NAMESPACE", "")
+        project = project.strip()
         session_id = self.context.session_id
 
         if not base or not project or not session_id:

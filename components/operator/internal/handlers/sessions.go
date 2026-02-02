@@ -899,6 +899,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 						{Name: "AGENTIC_SESSION_NAMESPACE", Value: sessionNamespace},
 						// Provide session id and workspace path for the runner wrapper
 						{Name: "SESSION_ID", Value: name},
+						{Name: "PROJECT_NAME", Value: sessionNamespace}, // For runtime credential fetching
 						{Name: "WORKSPACE_PATH", Value: "/workspace"},
 						{Name: "ARTIFACTS_DIR", Value: "artifacts"},
 						// AG-UI server port (must match containerPort and Service)

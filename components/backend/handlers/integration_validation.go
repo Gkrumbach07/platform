@@ -71,27 +71,43 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 		return false, fmt.Errorf("missing required credentials")
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	apiURL := fmt.Sprintf("%s/rest/api/3/myself", url)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to create request: %w", err)
+	client := &http.Client{Timeout: 15 * time.Second}
+	
+	// Try API v3 first (Jira Cloud), fallback to v2 (Jira Server/DC)
+	apiURLs := []string{
+		fmt.Sprintf("%s/rest/api/3/myself", url),
+		fmt.Sprintf("%s/rest/api/2/myself", url),
 	}
 
-	// Jira uses Basic Auth with email:token
-	req.SetBasicAuth(email, apiToken)
-	req.Header.Set("Accept", "application/json")
+	for _, apiURL := range apiURLs {
+		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+		if err != nil {
+			continue
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		// Don't wrap error - could leak credentials from request details
-		return false, fmt.Errorf("request failed")
+		// Jira uses Basic Auth with email:token
+		req.SetBasicAuth(email, apiToken)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			// Try next API version
+			continue
+		}
+		defer resp.Body.Close()
+
+		// 200 = valid, 401 = invalid/expired, 404 = wrong API version (try next)
+		if resp.StatusCode == http.StatusOK {
+			return true, nil
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return false, nil // Invalid credentials
+		}
+		// For 404 or other errors, try next API version
 	}
-	defer resp.Body.Close()
 
-	// 200 = valid, 401 = invalid/expired
-	return resp.StatusCode == http.StatusOK, nil
+	// If both API versions failed, credentials are invalid or unreachable
+	return false, nil
 }
 
 // ValidateGoogleToken checks if Google OAuth token is valid

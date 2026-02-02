@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -86,12 +87,22 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 
 	log.Printf("DEBUG Jira: Validating credentials for %s (email=%s, tokenLen=%d)", url, email, len(apiToken))
 
+	// First, test if Jira instance is reachable at all
+	serverInfoURL := fmt.Sprintf("%s/rest/api/2/serverInfo", url)
+	testReq, _ := http.NewRequestWithContext(ctx, "GET", serverInfoURL, nil)
+	if testResp, err := client.Do(testReq); err == nil {
+		defer testResp.Body.Close()
+		log.Printf("DEBUG Jira: Server reachable (serverInfo returned %d)", testResp.StatusCode)
+	} else {
+		log.Printf("DEBUG Jira: Server unreachable: %v", err)
+	}
+
 	var lastStatus int
 	var got401 bool
 
 	for i, apiURL := range apiURLs {
 		log.Printf("DEBUG Jira: Trying API v%d: %s", 3-i, apiURL)
-		
+
 		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 		if err != nil {
 			log.Printf("DEBUG Jira: Failed to create request: %v", err)
@@ -101,6 +112,9 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 		// Jira uses Basic Auth with email:token
 		req.SetBasicAuth(email, apiToken)
 		req.Header.Set("Accept", "application/json")
+		// Debug: Check auth header is set
+		authHeader := req.Header.Get("Authorization")
+		log.Printf("DEBUG Jira: Authorization header length=%d (Basic ...)", len(authHeader))
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -111,6 +125,12 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 
 		lastStatus = resp.StatusCode
 		log.Printf("DEBUG Jira: Got response status=%d from API v%d", resp.StatusCode, 3-i)
+
+		// Read response body for more context on 401
+		if resp.StatusCode == http.StatusUnauthorized {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("DEBUG Jira: 401 response body: %s", string(body)[:200]) // First 200 chars
+		}
 
 		// 200 = valid, 401 = invalid, 404 = wrong API version (try next)
 		if resp.StatusCode == http.StatusOK {
@@ -126,7 +146,7 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 			log.Printf("DEBUG Jira: Got 404 (API version not available), trying next")
 			continue
 		}
-		
+
 		// Other status (403, 500, etc)
 		log.Printf("DEBUG Jira: Unexpected status %d", resp.StatusCode)
 	}

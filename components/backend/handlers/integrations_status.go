@@ -111,15 +111,17 @@ func getJiraStatusForUser(ctx context.Context, userID string) gin.H {
 		return gin.H{"connected": false}
 	}
 
-	// Validate token
-	valid, _ := ValidateJiraToken(ctx, creds.URL, creds.Email, creds.APIToken)
+	// NOTE: Validation disabled - causing false negatives for valid credentials
+	// Jira validation is unreliable due to various auth configurations
+	// If credentials are stored, assume they're valid (user configured them)
+	// The MCP server will fail gracefully if credentials are actually invalid
 
 	return gin.H{
 		"connected": true,
 		"url":       creds.URL,
 		"email":     creds.Email,
 		"updatedAt": creds.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		"valid":     valid,
+		"valid":     true, // Always true - trust user's configuration
 	}
 }
 

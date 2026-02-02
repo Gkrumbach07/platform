@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -58,15 +59,20 @@ func GetGitHubToken(ctx context.Context, k8sClient *kubernetes.Clientset, dynCli
 	// Priority 1: Check for user's GitHub PAT (cluster-level)
 	if GetGitHubPATCredentials != nil {
 		patCreds, err := GetGitHubPATCredentials(ctx, userID)
+		// Explicit nil check - Go interface gotcha: nil pointer can be wrapped in non-nil interface
 		if err == nil && patCreds != nil {
-			type patCredentials interface {
+			type patInterface interface {
 				GetToken() string
 			}
-			if pat, ok := patCreds.(patCredentials); ok {
-				token := pat.GetToken()
-				if token != "" {
-					log.Printf("Using GitHub PAT for user %s (overrides GitHub App)", userID)
-					return token, nil
+			// Type assert and verify not nil before calling GetToken
+			if pat, ok := patCreds.(patInterface); ok {
+				// Check if interface contains nil pointer (Go gotcha: interface != nil but value is nil)
+				if pat != nil && reflect.ValueOf(pat).IsNil() == false {
+					token := pat.GetToken()
+					if token != "" {
+						log.Printf("Using GitHub PAT for user %s (overrides GitHub App)", userID)
+						return token, nil
+					}
 				}
 			}
 		}
@@ -86,8 +92,8 @@ func GetGitHubToken(ctx context.Context, k8sClient *kubernetes.Clientset, dynCli
 				MintInstallationTokenForHost(context.Context, int64, string) (string, time.Time, error)
 			}
 
-			if inst, ok := installation.(githubInstallation); ok {
-				if mgr, ok := GitHubTokenManager.(tokenManager); ok {
+			if inst, ok := installation.(githubInstallation); ok && inst != nil {
+				if mgr, ok := GitHubTokenManager.(tokenManager); ok && mgr != nil {
 					token, _, err := mgr.MintInstallationTokenForHost(ctx, inst.GetInstallationID(), inst.GetHost())
 					if err == nil && token != "" {
 						log.Printf("Using GitHub App token for user %s", userID)

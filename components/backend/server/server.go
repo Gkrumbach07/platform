@@ -113,7 +113,7 @@ func sanitizeUserID(userID string) string {
 
 	// Collapse multiple consecutive hyphens to single hyphen for readability
 	for strings.Contains(sanitized, "--") {
-		sanitized = strings.Replace(sanitized, "--", "-", -1)
+		sanitized = strings.ReplaceAll(sanitized, "--", "-")
 	}
 
 	return sanitized

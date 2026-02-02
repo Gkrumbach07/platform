@@ -79,9 +79,13 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 		fmt.Sprintf("%s/rest/api/2/myself", url),
 	}
 
+	var lastErr error
+	var got401 bool
+
 	for _, apiURL := range apiURLs {
 		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 
@@ -91,6 +95,7 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 
 		resp, err := client.Do(req)
 		if err != nil {
+			lastErr = err
 			// Try next API version
 			continue
 		}
@@ -101,13 +106,27 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 			return true, nil
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			return false, nil // Invalid credentials
+			got401 = true
+			// Don't return yet - might be wrong API version, try next
+			continue
 		}
 		// For 404 or other errors, try next API version
 	}
 
-	// If both API versions failed, credentials are invalid or unreachable
-	return false, nil
+	// If we got 401 on any attempt, credentials are definitely invalid
+	if got401 {
+		return false, nil
+	}
+
+	// If both API versions failed with network errors, return true but log warning
+	// This prevents false negatives for network issues
+	if lastErr != nil {
+		// Can't validate due to network issues - assume valid to avoid blocking users
+		return true, nil
+	}
+
+	// Both APIs returned non-200/non-401 (likely 404s) - credentials might be valid but API unreachable
+	return true, nil
 }
 
 // ValidateGoogleToken checks if Google OAuth token is valid

@@ -18,7 +18,7 @@ func ValidateGitHubToken(ctx context.Context, token string) (bool, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to create request: %w", err)
+		return false, fmt.Errorf("failed to create request")
 	}
 
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -26,7 +26,8 @@ func ValidateGitHubToken(ctx context.Context, token string) (bool, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request failed: %w", err)
+		// Don't wrap error - could leak token from request details
+		return false, fmt.Errorf("request failed")
 	}
 	defer resp.Body.Close()
 
@@ -55,7 +56,8 @@ func ValidateGitLabToken(ctx context.Context, token, instanceURL string) (bool, 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request failed: %w", err)
+		// Don't wrap error - could leak token from request details
+		return false, fmt.Errorf("request failed")
 	}
 	defer resp.Body.Close()
 
@@ -83,7 +85,8 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request failed: %w", err)
+		// Don't wrap error - could leak credentials from request details
+		return false, fmt.Errorf("request failed")
 	}
 	defer resp.Body.Close()
 
@@ -108,7 +111,8 @@ func ValidateGoogleToken(ctx context.Context, accessToken string) (bool, error) 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request failed: %w", err)
+		// Don't wrap error - could leak token from request details
+		return false, fmt.Errorf("request failed")
 	}
 	defer resp.Body.Close()
 

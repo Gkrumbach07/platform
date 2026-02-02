@@ -30,11 +30,23 @@ func Run(registerRoutes RouterFunc) error {
 		if strings.Contains(param.Request.URL.RawQuery, "token=") {
 			path = strings.Split(path, "?")[0] + "?token=[REDACTED]"
 		}
-		return fmt.Sprintf("[GIN] %s | %3d | %s | %s\n",
+		
+		// Redact Authorization header from logs
+		authHeader := "[none]"
+		if auth := param.Request.Header.Get("Authorization"); auth != "" {
+			if strings.HasPrefix(auth, "Bearer ") {
+				authHeader = "Bearer [REDACTED]"
+			} else {
+				authHeader = "[REDACTED]"
+			}
+		}
+		
+		return fmt.Sprintf("[GIN] %s | %3d | %s | %s | Auth: %s\n",
 			param.Method,
 			param.StatusCode,
 			param.ClientIP,
 			path,
+			authHeader,
 		)
 	}))
 

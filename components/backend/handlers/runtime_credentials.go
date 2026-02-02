@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -44,18 +45,24 @@ func GetGitHubTokenForSession(c *gin.Context) {
 		return
 	}
 
-	// Extract userID from spec.userContext
-	userID := ""
-	if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
-		if userContext, ok := spec["userContext"].(map[string]interface{}); ok {
-			if uid, ok := userContext["userId"].(string); ok {
-				userID = uid
-			}
-		}
+	// Extract userID from spec.userContext using type-safe unstructured helpers
+	userID, found, err := unstructured.NestedString(obj.Object, "spec", "userContext", "userId")
+	if !found || err != nil || userID == "" {
+		log.Printf("Failed to extract userID from session %s/%s: found=%v, err=%v", project, session, found, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+		return
 	}
 
-	if userID == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+	// Verify authenticated user owns this session (RBAC: prevent accessing other users' credentials)
+	authenticatedUserID := c.GetString("userID")
+	if authenticatedUserID == "" {
+		log.Printf("Missing authenticated userID in request context for session %s/%s", project, session)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if authenticatedUserID != userID {
+		log.Printf("RBAC violation: user %s attempted to access credentials for session owned by %s", authenticatedUserID, userID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied: session belongs to different user"})
 		return
 	}
 
@@ -104,18 +111,24 @@ func GetGoogleCredentialsForSession(c *gin.Context) {
 		return
 	}
 
-	// Extract userID from spec.userContext
-	userID := ""
-	if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
-		if userContext, ok := spec["userContext"].(map[string]interface{}); ok {
-			if uid, ok := userContext["userId"].(string); ok {
-				userID = uid
-			}
-		}
+	// Extract userID from spec.userContext using type-safe unstructured helpers
+	userID, found, err := unstructured.NestedString(obj.Object, "spec", "userContext", "userId")
+	if !found || err != nil || userID == "" {
+		log.Printf("Failed to extract userID from session %s/%s: found=%v, err=%v", project, session, found, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+		return
 	}
 
-	if userID == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+	// Verify authenticated user owns this session (RBAC: prevent accessing other users' credentials)
+	authenticatedUserID := c.GetString("userID")
+	if authenticatedUserID == "" {
+		log.Printf("Missing authenticated userID in request context for session %s/%s", project, session)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if authenticatedUserID != userID {
+		log.Printf("RBAC violation: user %s attempted to access credentials for session owned by %s", authenticatedUserID, userID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied: session belongs to different user"})
 		return
 	}
 
@@ -145,11 +158,11 @@ func GetGoogleCredentialsForSession(c *gin.Context) {
 		newCreds, err := refreshGoogleAccessToken(c.Request.Context(), creds)
 		if err != nil {
 			log.Printf("Failed to refresh Google token for user %s: %v", userID, err)
-			// Return existing token (may be expired, but better than nothing)
-		} else {
-			creds = newCreds
-			log.Printf("✓ Refreshed Google token for user %s", userID)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Google token expired and refresh failed. Please re-authenticate."})
+			return
 		}
+		creds = newCreds
+		log.Printf("✓ Refreshed Google token for user %s", userID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -186,18 +199,24 @@ func GetJiraCredentialsForSession(c *gin.Context) {
 		return
 	}
 
-	// Extract userID from spec.userContext
-	userID := ""
-	if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
-		if userContext, ok := spec["userContext"].(map[string]interface{}); ok {
-			if uid, ok := userContext["userId"].(string); ok {
-				userID = uid
-			}
-		}
+	// Extract userID from spec.userContext using type-safe unstructured helpers
+	userID, found, err := unstructured.NestedString(obj.Object, "spec", "userContext", "userId")
+	if !found || err != nil || userID == "" {
+		log.Printf("Failed to extract userID from session %s/%s: found=%v, err=%v", project, session, found, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+		return
 	}
 
-	if userID == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+	// Verify authenticated user owns this session (RBAC: prevent accessing other users' credentials)
+	authenticatedUserID := c.GetString("userID")
+	if authenticatedUserID == "" {
+		log.Printf("Missing authenticated userID in request context for session %s/%s", project, session)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if authenticatedUserID != userID {
+		log.Printf("RBAC violation: user %s attempted to access credentials for session owned by %s", authenticatedUserID, userID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied: session belongs to different user"})
 		return
 	}
 
@@ -247,18 +266,24 @@ func GetGitLabTokenForSession(c *gin.Context) {
 		return
 	}
 
-	// Extract userID from spec.userContext
-	userID := ""
-	if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
-		if userContext, ok := spec["userContext"].(map[string]interface{}); ok {
-			if uid, ok := userContext["userId"].(string); ok {
-				userID = uid
-			}
-		}
+	// Extract userID from spec.userContext using type-safe unstructured helpers
+	userID, found, err := unstructured.NestedString(obj.Object, "spec", "userContext", "userId")
+	if !found || err != nil || userID == "" {
+		log.Printf("Failed to extract userID from session %s/%s: found=%v, err=%v", project, session, found, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+		return
 	}
 
-	if userID == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in session"})
+	// Verify authenticated user owns this session (RBAC: prevent accessing other users' credentials)
+	authenticatedUserID := c.GetString("userID")
+	if authenticatedUserID == "" {
+		log.Printf("Missing authenticated userID in request context for session %s/%s", project, session)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User authentication required"})
+		return
+	}
+	if authenticatedUserID != userID {
+		log.Printf("RBAC violation: user %s attempted to access credentials for session owned by %s", authenticatedUserID, userID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied: session belongs to different user"})
 		return
 	}
 

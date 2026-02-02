@@ -818,10 +818,10 @@ func isValidUserID(userID string) bool {
 	// Check against K8s Secret key regex: [-._a-zA-Z0-9]+
 	// Check for invalid characters
 	for _, ch := range userID {
-		isValid := (ch >= 'a' && ch <= 'z') || 
-		          (ch >= 'A' && ch <= 'Z') || 
-		          (ch >= '0' && ch <= '9') || 
-		          ch == '-' || ch == '_' || ch == '.'
+		isValid := (ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '-' || ch == '_' || ch == '.'
 		if !isValid {
 			return false
 		}

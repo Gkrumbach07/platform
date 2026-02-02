@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { Plug, CheckCircle2, XCircle, AlertCircle, KeyRound, KeyRoundIcon } from 'lucide-react'
 import {
   AccordionItem,
@@ -137,7 +138,17 @@ export function McpIntegrationsAccordion({
                   <div className="flex-1">
                     <h4 className="font-medium text-sm">{server.displayName}</h4>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {server.authMessage || server.name}
+                      {server.authMessage && server.authMessage.includes('Integrations page') ? (
+                        <>
+                          {server.authMessage.split('Integrations page')[0]}
+                          <Link href="/integrations" className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline">
+                            Integrations page
+                          </Link>
+                          {server.authMessage.split('Integrations page')[1]}
+                        </>
+                      ) : (
+                        server.authMessage || server.name
+                      )}
                     </p>
                   </div>
                 </div>

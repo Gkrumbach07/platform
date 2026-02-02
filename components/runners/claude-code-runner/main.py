@@ -622,17 +622,41 @@ def _check_mcp_authentication(server_name: str) -> tuple[bool | None, str | None
         except KeyError as e:
             return False, f"Google OAuth credentials corrupted: {str(e)}"
 
-    # Jira/Atlassian MCP - we know how to check this
+    # Jira/Atlassian MCP - check both local env and backend availability
     if server_name in ("mcp-atlassian", "jira"):
         jira_url = os.getenv("JIRA_URL", "").strip()
         jira_token = os.getenv("JIRA_API_TOKEN", "").strip()
 
         if jira_url and jira_token:
             return True, "Jira credentials configured"
-        elif jira_url:
-            return False, "Jira URL set but API token missing"
-        else:
-            return False, "Jira not configured - set credentials in Workspace Settings"
+        
+        # Check if credentials available in backend (before first run)
+        try:
+            import urllib.request as _urllib_request
+            import json as _json
+            
+            base = os.getenv("BACKEND_API_URL", "").rstrip("/")
+            project = os.getenv("PROJECT_NAME") or os.getenv("AGENTIC_SESSION_NAMESPACE", "")
+            session_id = os.getenv("SESSION_ID", "")
+            
+            if base and project and session_id:
+                url = f"{base}/projects/{project.strip()}/agentic-sessions/{session_id}/credentials/jira"
+                req = _urllib_request.Request(url, method="GET")
+                bot = (os.getenv("BOT_TOKEN") or "").strip()
+                if bot:
+                    req.add_header("Authorization", f"Bearer {bot}")
+                
+                try:
+                    with _urllib_request.urlopen(req, timeout=3) as resp:
+                        data = _json.loads(resp.read())
+                        if data.get("apiToken"):
+                            return True, "Jira credentials available (not yet loaded in session)"
+                except:
+                    pass
+        except:
+            pass
+        
+        return False, "Jira not configured - connect on Integrations page"
 
     # For all other servers (webfetch, unknown) - don't claim to know auth status
     return None, None

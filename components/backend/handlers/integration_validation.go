@@ -72,7 +72,7 @@ func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, 
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	
+
 	// Try API v3 first (Jira Cloud), fallback to v2 (Jira Server/DC)
 	apiURLs := []string{
 		fmt.Sprintf("%s/rest/api/3/myself", url),

@@ -62,8 +62,8 @@ func getGitHubStatusForUser(ctx context.Context, userID string) gin.H {
 
 	// Check GitHub PAT
 	patCreds, err := GetGitHubPATCredentials(ctx, userID)
-	if err == nil && patCreds != nil {
-		// Validate PAT token
+	if err == nil && patCreds != nil && patCreds.Token != "" {
+		// Validate PAT token (safe - patCreds is concrete type, not nil)
 		valid, _ := ValidateGitHubToken(ctx, patCreds.Token)
 
 		status["pat"] = gin.H{

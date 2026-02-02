@@ -67,7 +67,7 @@ func GetGitHubToken(ctx context.Context, k8sClient *kubernetes.Clientset, dynCli
 			// Type assert and verify not nil before calling GetToken
 			if pat, ok := patCreds.(patInterface); ok {
 				// Check if interface contains nil pointer (Go gotcha: interface != nil but value is nil)
-				if pat != nil && reflect.ValueOf(pat).IsNil() == false {
+				if pat != nil && !reflect.ValueOf(pat).IsNil() {
 					token := pat.GetToken()
 					if token != "" {
 						log.Printf("Using GitHub PAT for user %s (overrides GitHub App)", userID)
@@ -149,15 +149,20 @@ func GetGitLabToken(ctx context.Context, k8sClient kubernetes.Interface, project
 	// Priority 1: Check cluster-level GitLab credentials
 	if GetGitLabCredentials != nil {
 		gitlabCreds, err := GetGitLabCredentials(ctx, userID)
+		// Explicit nil check - Go interface gotcha: nil pointer can be wrapped in non-nil interface
 		if err == nil && gitlabCreds != nil {
-			type gitlabCredentials interface {
+			type gitlabInterface interface {
 				GetToken() string
 			}
-			if creds, ok := gitlabCreds.(gitlabCredentials); ok && creds != nil {
-				token := creds.GetToken()
-				if token != "" {
-					log.Printf("Using cluster-level GitLab token for user %s", userID)
-					return token, nil
+			// Type assert and verify not nil before calling GetToken
+			if creds, ok := gitlabCreds.(gitlabInterface); ok {
+				// Check if interface contains nil pointer (Go gotcha: interface != nil but value is nil)
+				if creds != nil && !reflect.ValueOf(creds).IsNil() {
+					token := creds.GetToken()
+					if token != "" {
+						log.Printf("Using cluster-level GitLab token for user %s", userID)
+						return token, nil
+					}
 				}
 			}
 		}

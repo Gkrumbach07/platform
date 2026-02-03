@@ -12,18 +12,13 @@ func registerContentRoutes(r *gin.Engine) {
 	r.GET("/content/file", handlers.ContentRead)
 	r.GET("/content/list", handlers.ContentList)
 	r.DELETE("/content/delete", handlers.ContentDelete)
-	r.POST("/content/github/push", handlers.ContentGitPush)
-	r.POST("/content/github/abandon", handlers.ContentGitAbandon)
-	r.GET("/content/github/diff", handlers.ContentGitDiff)
 	r.GET("/content/git-status", handlers.ContentGitStatus)
 	r.POST("/content/git-configure-remote", handlers.ContentGitConfigureRemote)
-	r.POST("/content/git-sync", handlers.ContentGitSync)
 	r.GET("/content/workflow-metadata", handlers.ContentWorkflowMetadata)
-	r.GET("/content/git-merge-status", handlers.ContentGitMergeStatus)
-	r.POST("/content/git-pull", handlers.ContentGitPull)
-	r.POST("/content/git-push", handlers.ContentGitPushToBranch)
-	r.POST("/content/git-create-branch", handlers.ContentGitCreateBranch)
-	r.GET("/content/git-list-branches", handlers.ContentGitListBranches)
+	// Removed: All manual git operation endpoints - agent handles all git operations
+	// - /content/github/push, /content/github/abandon, /content/github/diff
+	// - /content/git-pull, /content/git-push, /content/git-sync
+	// - /content/git-create-branch, /content/git-list-branches
 }
 
 func registerRoutes(r *gin.Engine) {
@@ -38,6 +33,7 @@ func registerRoutes(r *gin.Engine) {
 		projectGroup := api.Group("/projects/:projectName", handlers.ValidateProjectContext())
 		{
 			projectGroup.GET("/access", handlers.AccessCheck)
+			projectGroup.GET("/integration-status", handlers.GetProjectIntegrationStatus)
 			projectGroup.GET("/users/forks", handlers.ListUserForks)
 			projectGroup.POST("/users/forks", handlers.CreateUserFork)
 
@@ -56,27 +52,21 @@ func registerRoutes(r *gin.Engine) {
 			projectGroup.POST("/agentic-sessions/:sessionName/clone", handlers.CloneSession)
 			projectGroup.POST("/agentic-sessions/:sessionName/start", handlers.StartSession)
 			projectGroup.POST("/agentic-sessions/:sessionName/stop", handlers.StopSession)
-			projectGroup.POST("/agentic-sessions/:sessionName/workspace/enable", handlers.EnableWorkspaceAccess)
-			projectGroup.POST("/agentic-sessions/:sessionName/workspace/touch", handlers.TouchWorkspaceAccess)
 			projectGroup.GET("/agentic-sessions/:sessionName/workspace", handlers.ListSessionWorkspace)
 			projectGroup.GET("/agentic-sessions/:sessionName/workspace/*path", handlers.GetSessionWorkspaceFile)
 			projectGroup.PUT("/agentic-sessions/:sessionName/workspace/*path", handlers.PutSessionWorkspaceFile)
 			projectGroup.DELETE("/agentic-sessions/:sessionName/workspace/*path", handlers.DeleteSessionWorkspaceFile)
-			projectGroup.POST("/agentic-sessions/:sessionName/github/push", handlers.PushSessionRepo)
-			projectGroup.POST("/agentic-sessions/:sessionName/github/abandon", handlers.AbandonSessionRepo)
-			projectGroup.GET("/agentic-sessions/:sessionName/github/diff", handlers.DiffSessionRepo)
+			// Removed: github/push, github/abandon, github/diff - agent handles all git operations
 			projectGroup.GET("/agentic-sessions/:sessionName/git/status", handlers.GetGitStatus)
 			projectGroup.POST("/agentic-sessions/:sessionName/git/configure-remote", handlers.ConfigureGitRemote)
-			projectGroup.POST("/agentic-sessions/:sessionName/git/synchronize", handlers.SynchronizeGit)
-			projectGroup.GET("/agentic-sessions/:sessionName/git/merge-status", handlers.GetGitMergeStatus)
-			projectGroup.POST("/agentic-sessions/:sessionName/git/pull", handlers.GitPullSession)
-			projectGroup.POST("/agentic-sessions/:sessionName/git/push", handlers.GitPushSession)
-			projectGroup.POST("/agentic-sessions/:sessionName/git/create-branch", handlers.GitCreateBranchSession)
+			// Removed: git/pull, git/push, git/synchronize, git/create-branch, git/list-branches - agent handles all git operations
 			projectGroup.GET("/agentic-sessions/:sessionName/git/list-branches", handlers.GitListBranchesSession)
 			projectGroup.GET("/agentic-sessions/:sessionName/k8s-resources", handlers.GetSessionK8sResources)
 			projectGroup.POST("/agentic-sessions/:sessionName/workflow", handlers.SelectWorkflow)
 			projectGroup.GET("/agentic-sessions/:sessionName/workflow/metadata", handlers.GetWorkflowMetadata)
 			projectGroup.POST("/agentic-sessions/:sessionName/repos", handlers.AddRepo)
+			// NOTE: /repos/status must come BEFORE /repos/:repoName to avoid wildcard matching
+			projectGroup.GET("/agentic-sessions/:sessionName/repos/status", handlers.GetReposStatus)
 			projectGroup.DELETE("/agentic-sessions/:sessionName/repos/:repoName", handlers.RemoveRepo)
 			projectGroup.PUT("/agentic-sessions/:sessionName/displayname", handlers.UpdateSessionDisplayName)
 
@@ -88,9 +78,19 @@ func registerRoutes(r *gin.Engine) {
 			// Runner is a FastAPI server - backend proxies requests and streams SSE responses
 			projectGroup.POST("/agentic-sessions/:sessionName/agui/run", websocket.HandleAGUIRunProxy)
 			projectGroup.POST("/agentic-sessions/:sessionName/agui/interrupt", websocket.HandleAGUIInterrupt)
+			projectGroup.POST("/agentic-sessions/:sessionName/agui/feedback", websocket.HandleAGUIFeedback)
 			projectGroup.GET("/agentic-sessions/:sessionName/agui/events", websocket.HandleAGUIEvents)
 			projectGroup.GET("/agentic-sessions/:sessionName/agui/history", websocket.HandleAGUIHistory)
 			projectGroup.GET("/agentic-sessions/:sessionName/agui/runs", websocket.HandleAGUIRuns)
+
+			// MCP status endpoint
+			projectGroup.GET("/agentic-sessions/:sessionName/mcp/status", websocket.HandleMCPStatus)
+
+			// Runtime credential fetch endpoints (for long-running sessions)
+			projectGroup.GET("/agentic-sessions/:sessionName/credentials/github", handlers.GetGitHubTokenForSession)
+			projectGroup.GET("/agentic-sessions/:sessionName/credentials/google", handlers.GetGoogleCredentialsForSession)
+			projectGroup.GET("/agentic-sessions/:sessionName/credentials/jira", handlers.GetJiraCredentialsForSession)
+			projectGroup.GET("/agentic-sessions/:sessionName/credentials/gitlab", handlers.GetGitLabTokenForSession)
 
 			// Session export
 			projectGroup.GET("/agentic-sessions/:sessionName/export", websocket.HandleExportSession)
@@ -109,7 +109,8 @@ func registerRoutes(r *gin.Engine) {
 			projectGroup.GET("/integration-secrets", handlers.ListIntegrationSecrets)
 			projectGroup.PUT("/integration-secrets", handlers.UpdateIntegrationSecrets)
 
-			// GitLab authentication endpoints (project-scoped)
+			// GitLab authentication endpoints (DEPRECATED - moved to cluster-scoped)
+			// Kept for backward compatibility, will be removed in future version
 			projectGroup.POST("/auth/gitlab/connect", handlers.ConnectGitLabGlobal)
 			projectGroup.GET("/auth/gitlab/status", handlers.GetGitLabStatusGlobal)
 			projectGroup.POST("/auth/gitlab/disconnect", handlers.DisconnectGitLabGlobal)
@@ -119,6 +120,31 @@ func registerRoutes(r *gin.Engine) {
 		api.GET("/auth/github/status", handlers.GetGitHubStatusGlobal)
 		api.POST("/auth/github/disconnect", handlers.DisconnectGitHubGlobal)
 		api.GET("/auth/github/user/callback", handlers.HandleGitHubUserOAuthCallback)
+
+		// GitHub PAT (alternative to GitHub App)
+		api.POST("/auth/github/pat", handlers.SaveGitHubPAT)
+		api.GET("/auth/github/pat/status", handlers.GetGitHubPATStatus)
+		api.DELETE("/auth/github/pat", handlers.DeleteGitHubPAT)
+
+		// Cluster-level Google OAuth (similar to GitHub App pattern)
+		api.POST("/auth/google/connect", handlers.GetGoogleOAuthURLGlobal)
+		api.GET("/auth/google/status", handlers.GetGoogleOAuthStatusGlobal)
+		api.POST("/auth/google/disconnect", handlers.DisconnectGoogleOAuthGlobal)
+
+		// Unified integrations status endpoint
+		api.GET("/auth/integrations/status", handlers.GetIntegrationsStatus)
+
+		// Cluster-level Jira (user-scoped)
+		api.POST("/auth/jira/connect", handlers.ConnectJira)
+		api.GET("/auth/jira/status", handlers.GetJiraStatus)
+		api.DELETE("/auth/jira/disconnect", handlers.DisconnectJira)
+		api.POST("/auth/jira/test", handlers.TestJiraConnection)
+
+		// Cluster-level GitLab (user-scoped)
+		api.POST("/auth/gitlab/connect", handlers.ConnectGitLabGlobal)
+		api.GET("/auth/gitlab/status", handlers.GetGitLabStatusGlobal)
+		api.DELETE("/auth/gitlab/disconnect", handlers.DisconnectGitLabGlobal)
+		api.POST("/auth/gitlab/test", handlers.TestGitLabConnection)
 
 		// Cluster info endpoint (public, no auth required)
 		api.GET("/cluster-info", handlers.GetClusterInfo)

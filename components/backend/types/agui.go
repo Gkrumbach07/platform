@@ -4,6 +4,22 @@ package types
 
 import "time"
 
+// Timestamp format constants for AG-UI events and metadata.
+// These ensure consistent timestamp formatting across the codebase.
+const (
+	// AGUITimestampFormat is used for event timestamps that require nanosecond precision.
+	// This preserves event ordering when multiple events occur in rapid succession.
+	// Format: "2006-01-02T15:04:05.999999999Z07:00" (RFC3339 with nanoseconds)
+	// Used in: BaseEvent.Timestamp, streamed events
+	AGUITimestampFormat = time.RFC3339Nano
+
+	// AGUIMetadataTimestampFormat is used for run/session metadata timestamps.
+	// This is sufficient for human-readable timestamps where nanosecond precision isn't needed.
+	// Format: "2006-01-02T15:04:05Z07:00" (RFC3339)
+	// Used in: AGUIRunMetadata.StartedAt, AGUIRunMetadata.FinishedAt
+	AGUIMetadataTimestampFormat = time.RFC3339
+)
+
 // AG-UI Event Types as defined in the protocol specification
 // See: https://docs.ag-ui.com/concepts/events
 const (
@@ -39,6 +55,10 @@ const (
 
 	// Raw event for pass-through
 	EventTypeRaw = "RAW"
+
+	// META event for user feedback (thumbs up/down)
+	// See: https://docs.ag-ui.com/drafts/meta-events
+	EventTypeMeta = "META"
 )
 
 // AG-UI Message Roles
@@ -58,7 +78,7 @@ type BaseEvent struct {
 	Type      string `json:"type"`
 	ThreadID  string `json:"threadId"`
 	RunID     string `json:"runId"`
-	Timestamp string `json:"timestamp"`
+	Timestamp string `json:"timestamp"` // Format: AGUITimestampFormat (RFC3339Nano)
 	// Optional fields
 	MessageID   string `json:"messageId,omitempty"`
 	ParentRunID string `json:"parentRunId,omitempty"`
@@ -253,13 +273,43 @@ type RawEvent struct {
 	Data interface{} `json:"data"`
 }
 
+// MetaEvent represents AG-UI META events for user feedback
+// See: https://docs.ag-ui.com/drafts/meta-events#user-feedback
+type MetaEvent struct {
+	BaseEvent
+	MetaType string                 `json:"metaType"` // "thumbs_up" or "thumbs_down"
+	Payload  map[string]interface{} `json:"payload"`
+}
+
+// FeedbackPayload contains the payload for feedback META events
+type FeedbackPayload struct {
+	MessageID string `json:"messageId,omitempty"` // ID of the message being rated
+	UserID    string `json:"userId"`              // User providing feedback
+	Reason    string `json:"reason,omitempty"`    // Reason for negative feedback
+	Comment   string `json:"comment,omitempty"`   // Additional user comment
+	// Extended fields for Langfuse context
+	ProjectName       string                   `json:"projectName,omitempty"`
+	SessionName       string                   `json:"sessionName,omitempty"`
+	Workflow          string                   `json:"workflow,omitempty"`
+	Context           string                   `json:"context,omitempty"`
+	IncludeTranscript bool                     `json:"includeTranscript,omitempty"`
+	Transcript        []FeedbackTranscriptItem `json:"transcript,omitempty"`
+}
+
+// FeedbackTranscriptItem represents a message in the feedback transcript
+type FeedbackTranscriptItem struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
 // NewBaseEvent creates a new BaseEvent with current timestamp
 func NewBaseEvent(eventType, threadID, runID string) BaseEvent {
 	return BaseEvent{
 		Type:      eventType,
 		ThreadID:  threadID,
 		RunID:     runID,
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Timestamp: time.Now().UTC().Format(AGUITimestampFormat),
 	}
 }
 

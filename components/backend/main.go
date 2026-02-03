@@ -67,6 +67,7 @@ func main() {
 		handlers.GitCheckMergeStatus = git.CheckMergeStatus
 		handlers.GitPullRepo = git.PullRepo
 		handlers.GitPushToRepo = git.PushToRepo
+		handlers.GitSyncRepo = git.SyncRepo
 		handlers.GitCreateBranch = git.CreateBranch
 		handlers.GitListRemoteBranches = git.ListRemoteBranches
 
@@ -95,6 +96,12 @@ func main() {
 	git.GetGitHubInstallation = func(ctx context.Context, userID string) (interface{}, error) {
 		return github.GetInstallation(ctx, userID)
 	}
+	git.GetGitHubPATCredentials = func(ctx context.Context, userID string) (interface{}, error) {
+		return handlers.GetGitHubPATCredentials(ctx, userID)
+	}
+	git.GetGitLabCredentials = func(ctx context.Context, userID string) (interface{}, error) {
+		return handlers.GetGitLabCredentials(ctx, userID)
+	}
 	git.GitHubTokenManager = github.Manager
 	git.GetBackendNamespace = func() string {
 		return server.Namespace
@@ -108,6 +115,7 @@ func main() {
 	handlers.GitCheckMergeStatus = git.CheckMergeStatus
 	handlers.GitPullRepo = git.PullRepo
 	handlers.GitPushToRepo = git.PushToRepo
+	handlers.GitSyncRepo = git.SyncRepo
 	handlers.GitCreateBranch = git.CreateBranch
 	handlers.GitListRemoteBranches = git.ListRemoteBranches
 
@@ -125,6 +133,7 @@ func main() {
 	handlers.GetAgenticSessionV1Alpha1Resource = k8s.GetAgenticSessionV1Alpha1Resource
 	handlers.DynamicClient = server.DynamicClient
 	handlers.GetGitHubToken = handlers.WrapGitHubTokenForRepo(git.GetGitHubToken)
+	handlers.GetGitLabToken = git.GetGitLabToken
 	handlers.DeriveRepoFolderFromURL = git.DeriveRepoFolderFromURL
 	// LEGACY: SendMessageToSession removed - AG-UI server uses HTTP/SSE instead of WebSocket
 

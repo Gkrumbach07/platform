@@ -4,16 +4,20 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"ambient-code-backend/git"
 	"ambient-code-backend/pathutil"
+	"ambient-code-backend/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,12 +32,63 @@ var (
 	GitPushRepo           func(ctx context.Context, repoDir, commitMessage, outputRepoURL, branch, githubToken string) (string, error)
 	GitAbandonRepo        func(ctx context.Context, repoDir string) error
 	GitDiffRepo           func(ctx context.Context, repoDir string) (*git.DiffSummary, error)
-	GitCheckMergeStatus   func(ctx context.Context, repoDir, branch string) (*git.MergeStatus, error)
-	GitPullRepo           func(ctx context.Context, repoDir, branch string) error
-	GitPushToRepo         func(ctx context.Context, repoDir, branch, commitMessage string) error
+	GitCheckMergeStatus   func(ctx context.Context, repoDir, branch, githubToken string) (*git.MergeStatus, error)
+	GitPullRepo           func(ctx context.Context, repoDir, branch, githubToken string) error
+	GitPushToRepo         func(ctx context.Context, repoDir, branch, commitMessage, githubToken string) error
 	GitCreateBranch       func(ctx context.Context, repoDir, branchName string) error
 	GitListRemoteBranches func(ctx context.Context, repoDir string) ([]string, error)
+	GitSyncRepo           func(ctx context.Context, repoDir, commitMessage, branch, githubToken string) error
+	// GetRemoteURL retrieves the origin remote URL - mockable for testing
+	GetRemoteURL func(ctx context.Context, repoDir string) (string, error)
 )
+
+// getGitHubTokenFromContext extracts GitHub token from request header or environment
+func getGitHubTokenFromContext(c *gin.Context) string {
+	// Prefer header (passed by backend)
+	if token := strings.TrimSpace(c.GetHeader("X-GitHub-Token")); token != "" {
+		return token
+	}
+	// Fall back to env var (injected via EnvFrom)
+	return strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+}
+
+// getGitLabTokenFromContext extracts GitLab token from request header or environment
+func getGitLabTokenFromContext(c *gin.Context) string {
+	// Prefer header (passed by backend)
+	if token := strings.TrimSpace(c.GetHeader("X-GitLab-Token")); token != "" {
+		return token
+	}
+	// Fall back to env var (injected via EnvFrom)
+	return strings.TrimSpace(os.Getenv("GITLAB_TOKEN"))
+}
+
+// getGitTokenForURL returns the appropriate token based on the repository URL
+func getGitTokenForURL(c *gin.Context, repoURL string) string {
+	provider := types.DetectProvider(repoURL)
+	if provider == types.ProviderGitLab {
+		return getGitLabTokenFromContext(c)
+	}
+	// Default to GitHub token for github.com or unknown providers
+	return getGitHubTokenFromContext(c)
+}
+
+// defaultGetRemoteURL is the default implementation of GetRemoteURL
+func defaultGetRemoteURL(ctx context.Context, repoDir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("no remote configured: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func init() {
+	// Set default implementation if not already set (allows test mocking)
+	if GetRemoteURL == nil {
+		GetRemoteURL = defaultGetRemoteURL
+	}
+}
 
 // ContentGitPush handles POST /content/github/push in CONTENT_SERVICE_MODE
 func ContentGitPush(c *gin.Context) {
@@ -70,12 +125,12 @@ func ContentGitPush(c *gin.Context) {
 
 	log.Printf("contentGitPush: using repoDir=%q (stateBaseDir=%q)", repoDir, StateBaseDir)
 
-	// Optional GitHub token provided by backend via internal header
-	gitHubToken := strings.TrimSpace(c.GetHeader("X-GitHub-Token"))
-	log.Printf("contentGitPush: tokenHeaderPresent=%t url.host.redacted=%t branch=%q", gitHubToken != "", strings.HasPrefix(body.OutputRepoURL, "https://"), body.Branch)
+	// Get appropriate token based on repository URL
+	gitToken := getGitTokenForURL(c, body.OutputRepoURL)
+	log.Printf("contentGitPush: tokenHeaderPresent=%t url.host.redacted=%t branch=%q", gitToken != "", strings.HasPrefix(body.OutputRepoURL, "https://"), body.Branch)
 
 	// Call refactored git push function
-	out, err := GitPushRepo(c.Request.Context(), repoDir, body.CommitMessage, body.OutputRepoURL, body.Branch, gitHubToken)
+	out, err := GitPushRepo(c.Request.Context(), repoDir, body.CommitMessage, body.OutputRepoURL, body.Branch, gitToken)
 	if err != nil {
 		if out == "" {
 			// No changes to commit
@@ -186,6 +241,19 @@ func ContentGitStatus(c *gin.Context) {
 		return
 	}
 
+	// Get current branch
+	branchCmd := exec.CommandContext(c.Request.Context(), "git", "rev-parse", "--abbrev-ref", "HEAD")
+	branchCmd.Dir = abs
+	branchOut, _ := branchCmd.Output()
+	currentBranch := strings.TrimSpace(string(branchOut))
+
+	// Check if remote is configured
+	remoteCmd := exec.CommandContext(c.Request.Context(), "git", "remote", "get-url", "origin")
+	remoteCmd.Dir = abs
+	remoteOut, remoteErr := remoteCmd.Output()
+	remoteURL := strings.TrimSpace(string(remoteOut))
+	hasRemote := remoteErr == nil && remoteURL != ""
+
 	// Get git status using existing git package
 	summary, err := GitDiffRepo(c.Request.Context(), abs)
 	if err != nil {
@@ -193,6 +261,9 @@ func ContentGitStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"initialized": true,
 			"hasChanges":  false,
+			"branch":      currentBranch,
+			"remoteUrl":   remoteURL,
+			"hasRemote":   hasRemote,
 		})
 		return
 	}
@@ -202,6 +273,9 @@ func ContentGitStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"initialized":      true,
 		"hasChanges":       hasChanges,
+		"branch":           currentBranch,
+		"remoteUrl":        remoteURL,
+		"hasRemote":        hasRemote,
 		"filesAdded":       summary.FilesAdded,
 		"filesRemoved":     summary.FilesRemoved,
 		"uncommittedFiles": summary.FilesAdded + summary.FilesRemoved,
@@ -248,13 +322,14 @@ func ContentGitConfigureRemote(c *gin.Context) {
 		log.Printf("Initialized git repository at %s", abs)
 	}
 
-	// Get GitHub token and inject into URL for authentication
+	// Get appropriate token and inject into URL for authentication
+	// SECURITY: remoteURL may contain embedded token after injection - never log it
 	remoteURL := body.RemoteURL
-	gitHubToken := strings.TrimSpace(c.GetHeader("X-GitHub-Token"))
-	if gitHubToken != "" {
-		if authenticatedURL, err := git.InjectGitHubToken(remoteURL, gitHubToken); err == nil {
+	token := getGitTokenForURL(c, body.RemoteURL)
+	if token != "" {
+		if authenticatedURL, err := git.InjectGitToken(remoteURL, token); err == nil {
 			remoteURL = authenticatedURL
-			log.Printf("Injected GitHub token into remote URL")
+			log.Printf("ContentConfigureRemote: configured authentication for provider=%s tokenLen=%d", types.DetectProvider(body.RemoteURL), len(token))
 		}
 	}
 
@@ -316,8 +391,17 @@ func ContentGitSync(c *gin.Context) {
 		return
 	}
 
-	// Perform git sync operations
-	if err := git.SyncRepo(c.Request.Context(), abs, body.Message, body.Branch); err != nil {
+	// Get remote URL to determine which token to use
+	remoteURL, err := GetRemoteURL(c.Request.Context(), abs)
+	if err != nil {
+		log.Printf("ContentGitSync: failed to get remote URL for %s: %v", abs, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no remote configured"})
+		return
+	}
+
+	// Perform git sync operations with authentication
+	gitToken := getGitTokenForURL(c, remoteURL)
+	if err := GitSyncRepo(c.Request.Context(), abs, body.Message, body.Branch, gitToken); err != nil {
 		// Log actual error for debugging, but return generic message to avoid leaking internal details
 		log.Printf("Internal server error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
@@ -511,21 +595,45 @@ func ContentWorkflowMetadata(c *gin.Context) {
 					displayName = commandName
 				}
 
-				// Extract short command (last segment after final dot)
-				shortCommand := commandName
-				if lastDot := strings.LastIndex(commandName, "."); lastDot != -1 {
-					shortCommand = commandName[lastDot+1:]
+				// Parse order field from frontmatter, default to MaxInt32 for unordered commands
+				order := int(^uint(0) >> 1) // MaxInt
+				if orderStr := metadata["order"]; orderStr != "" {
+					if parsed, err := strconv.Atoi(orderStr); err == nil {
+						order = parsed
+					}
 				}
 
+				// Use full command name as slash command (e.g., /speckit.rfe.start)
 				commands = append(commands, map[string]interface{}{
 					"id":           commandName,
 					"name":         displayName,
 					"description":  metadata["description"],
-					"slashCommand": "/" + shortCommand,
+					"slashCommand": "/" + commandName,
 					"icon":         metadata["icon"],
+					"order":        order,
 				})
 			}
 		}
+
+		// Sort commands by order field (ascending)
+		sort.Slice(commands, func(i, j int) bool {
+			iOrder, iOk := commands[i]["order"].(int)
+			jOrder, jOk := commands[j]["order"].(int)
+			if !iOk {
+				iOrder = int(^uint(0) >> 1) // MaxInt
+			}
+			if !jOk {
+				jOrder = int(^uint(0) >> 1) // MaxInt
+			}
+			// If orders are equal, sort alphabetically by id for consistent ordering
+			if iOrder == jOrder {
+				iID, _ := commands[i]["id"].(string)
+				jID, _ := commands[j]["id"].(string)
+				return iID < jID
+			}
+			return iOrder < jOrder
+		})
+
 		log.Printf("ContentWorkflowMetadata: found %d commands", len(commands))
 	} else {
 		log.Printf("ContentWorkflowMetadata: commands directory not found or unreadable: %v", err)
@@ -648,9 +756,9 @@ func parseAmbientConfig(workflowDir string) *AmbientConfig {
 
 // findActiveWorkflowDir finds the active workflow directory for a session
 func findActiveWorkflowDir(sessionName string) string {
-	// Workflows are stored at {StateBaseDir}/sessions/{session-name}/workspace/workflows/{workflow-name}
-	// The runner creates this nested structure
-	workflowsBase := filepath.Join(StateBaseDir, "sessions", sessionName, "workspace", "workflows")
+	// Workflows are stored at {StateBaseDir}/workflows/{workflow-name}
+	// The runner clones workflows to /workspace/workflows/ at runtime
+	workflowsBase := filepath.Join(StateBaseDir, "workflows")
 
 	entries, err := os.ReadDir(workflowsBase)
 	if err != nil {
@@ -700,11 +808,17 @@ func ContentGitMergeStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := GitCheckMergeStatus(c.Request.Context(), abs, branch)
+	// Get remote URL to determine which token to use
+	// Proceed without token if no remote configured - merge status check is read-only and may
+	// be called before remote is configured (e.g., for local-only repositories)
+	var gitToken string
+	if remoteURL, err := GetRemoteURL(c.Request.Context(), abs); err == nil {
+		gitToken = getGitTokenForURL(c, remoteURL)
+	}
+
+	status, err := GitCheckMergeStatus(c.Request.Context(), abs, branch, gitToken)
 	if err != nil {
 		log.Printf("ContentGitMergeStatus: check failed: %v", err)
-		// Log actual error for debugging, but return generic message to avoid leaking internal details
-		log.Printf("Internal server error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
@@ -737,7 +851,16 @@ func ContentGitPull(c *gin.Context) {
 		body.Branch = "main"
 	}
 
-	if err := GitPullRepo(c.Request.Context(), abs, body.Branch); err != nil {
+	// Get remote URL to determine which token to use
+	remoteURL, err := GetRemoteURL(c.Request.Context(), abs)
+	if err != nil {
+		log.Printf("ContentGitPull: failed to get remote URL for %s: %v", abs, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no remote configured"})
+		return
+	}
+
+	gitToken := getGitTokenForURL(c, remoteURL)
+	if err := GitPullRepo(c.Request.Context(), abs, body.Branch, gitToken); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -776,7 +899,16 @@ func ContentGitPushToBranch(c *gin.Context) {
 		body.Message = "Session artifacts update"
 	}
 
-	if err := GitPushToRepo(c.Request.Context(), abs, body.Branch, body.Message); err != nil {
+	// Get remote URL to determine which token to use
+	remoteURL, err := GetRemoteURL(c.Request.Context(), abs)
+	if err != nil {
+		log.Printf("ContentGitPushToBranch: failed to get remote URL for %s: %v", abs, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no remote configured"})
+		return
+	}
+
+	gitToken := getGitTokenForURL(c, remoteURL)
+	if err := GitPushToRepo(c.Request.Context(), abs, body.Branch, body.Message, gitToken); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

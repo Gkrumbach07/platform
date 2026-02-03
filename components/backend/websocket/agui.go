@@ -123,6 +123,11 @@ func RouteAGUIEvent(sessionID string, event map[string]interface{}) {
 
 	// If no active run found, check if event has a runId we should create
 	if activeRunState == nil {
+		// Ensure timestamp is set before any early returns
+		if event["timestamp"] == nil || event["timestamp"] == "" {
+			event["timestamp"] = time.Now().UTC().Format(types.AGUITimestampFormat)
+		}
+
 		// Don't create lazy runs for terminal events - they should only apply to existing runs
 		if isTerminalEventType(eventType) {
 			go persistAGUIEventMap(sessionID, "", event)
@@ -163,12 +168,16 @@ func RouteAGUIEvent(sessionID string, event map[string]interface{}) {
 		threadID = eventThreadID
 	}
 
-	// Fill in missing IDs only if not present
+	// Fill in missing IDs and timestamp
 	if event["threadId"] == nil || event["threadId"] == "" {
 		event["threadId"] = threadID
 	}
 	if event["runId"] == nil || event["runId"] == "" {
 		event["runId"] = runID
+	}
+	// Add timestamp if not present - critical for message timestamp tracking
+	if event["timestamp"] == nil || event["timestamp"] == "" {
+		event["timestamp"] = time.Now().UTC().Format(types.AGUITimestampFormat)
 	}
 
 	// Broadcast to run-specific SSE subscribers
@@ -369,10 +378,20 @@ func streamThreadEvents(c *gin.Context, projectName, sessionName string) {
 		aguiRunsMu.Unlock()
 
 		// Filter to only events from COMPLETED runs (have terminal event)
+		// Also collect session-level META events (feedback, etc.) which may not have runId
 		completedEvents := make([]map[string]interface{}, 0)
+		sessionMetaEvents := make([]map[string]interface{}, 0)
 		skippedCount := 0
 		for _, event := range events {
+			eventType, _ := event["type"].(string)
 			eventRunID, ok := event["runId"].(string)
+
+			// META events may not have runId (session-level feedback) - collect them separately
+			if eventType == types.EventTypeMeta {
+				sessionMetaEvents = append(sessionMetaEvents, event)
+				continue
+			}
+
 			if !ok {
 				continue
 			}
@@ -406,6 +425,16 @@ func streamThreadEvents(c *gin.Context, projectName, sessionName string) {
 				writeSSEEvent(c.Writer, snapshot)
 				c.Writer.(http.Flusher).Flush()
 			}
+		}
+
+		// Replay ALL session META events (feedback, tags, annotations)
+		// META events are session-level and not part of MESSAGES_SNAPSHOT
+		// They must be replayed regardless of runId to survive reconnects
+		if len(sessionMetaEvents) > 0 {
+			for _, event := range sessionMetaEvents {
+				writeSSEEvent(c.Writer, event)
+			}
+			c.Writer.(http.Flusher).Flush()
 		}
 	} else if err != nil {
 		log.Printf("AGUI: Failed to load events: %v", err)

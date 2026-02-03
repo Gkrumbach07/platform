@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "webfetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
     "mcp-atlassian": {
       "command": "mcp-atlassian",
       "args": [],
@@ -11,7 +15,6 @@
       }
     },
     "google-workspace": {
-      "type": "stdio",
       "command": "uvx",
       "args": [
         "workspace-mcp@1.6.1",

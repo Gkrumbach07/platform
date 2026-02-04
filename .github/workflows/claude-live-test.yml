@@ -165,68 +165,34 @@ jobs:
       env:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_TITLE: ${{ github.event.pull_request.title }}
-        TEST_TOKEN: ${{ steps.token.outputs.token }}
       run: |
-        mkdir -p /tmp/test_output
-        cat > /tmp/test-prompt.txt << EOF
-        # AI-Powered Live Testing Task
+        # Create prompt with proper escaping
+        cat > /tmp/test-prompt.txt << 'PROMPT_EOF'
+        You are testing a web application for this PR using Playwright MCP browser tools.
 
-        You are performing exploratory testing on a deployed web application for this PR.
+        PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
+        App URL: http://localhost
+        Test workspace name: e2e-claude-test-${{ github.event.pull_request.number }}
 
-        ## Application Access
+        IMPORTANT: You have browser automation tools from Playwright MCP
 
-        - **Frontend URL:** http://localhost
-        - **Auth Token:** ${TEST_TOKEN}
-        - **Test workspace:** e2e-claude-test-${PR_NUMBER}
+        Your testing steps:
+        1. Use browser_navigate to go to http://localhost
+        2. Use browser_snapshot to see the page structure
+        3. Click "New Workspace" button and create workspace: e2e-claude-test-${{ github.event.pull_request.number }}
+        4. Test project deletion - try deleting multiple projects quickly
+        5. Take screenshots at key moments
+        6. Write findings to /tmp/test_output/test_report.md using the Write tool
 
-        ## Your Testing Mission
-
-        1. **Navigate to the application**
-           ```
-           Use browser_navigate to go to http://localhost
-           Use browser_snapshot to see the page structure
-           ```
-
-        2. **Create a test workspace**
-           - Look for "New Workspace" or similar button
-           - Name it: e2e-claude-test-${PR_NUMBER}
-
-        3. **Test the PR changes**
-           Based on PR #${PR_NUMBER}: "${PR_TITLE}"
-           
-           - Navigate to areas affected by the PR
-           - Test the main functionality
-           - Try edge cases (empty inputs, errors, etc.)
-           - Test navigation and UI interactions
-
-        4. **Exploratory testing**
-           - Click around related features
-           - Look for UI bugs (misalignment, broken links)
-           - Test error handling
-           - Verify responsive behavior
-
-        5. **Generate test report**
-           Create a file `/tmp/test_output/test_report.md` with:
-           - Executive summary
-           - Test scenarios executed
-           - Screenshots taken (use browser_take_screenshot)
-           - Issues found (if any)
-           - Overall assessment (✅ Pass / ⚠️ Issues / ❌ Fail)
-
-        ## Tips
-
-        - Use browser tools to navigate, interact, and test
-        - Use `browser_snapshot()` to understand page structure
-        - Take screenshots at key test points
-        - Be thorough but efficient (~20 minute budget)
-
-        Begin testing now!
-        EOF
+        Focus on testing the race condition fix for rapid project deletions.
+        PROMPT_EOF
         
-        # Read the prompt content and save to output
-        echo "prompt<<PROMPT_EOF" >> $GITHUB_OUTPUT
-        cat /tmp/test-prompt.txt >> $GITHUB_OUTPUT
-        echo "PROMPT_EOF" >> $GITHUB_OUTPUT
+        # Save to output
+        {
+          echo 'prompt<<GITHUB_OUTPUT_EOF'
+          cat /tmp/test-prompt.txt
+          echo 'GITHUB_OUTPUT_EOF'
+        } >> $GITHUB_OUTPUT
         
         echo "✅ Test prompt created"
 
@@ -242,6 +208,8 @@ jobs:
           --mcp-config /tmp/mcp/playwright-config.json
           --max-turns 30
           --model claude-sonnet-4-5-20250929
+          --allowedTools "browser_*,Read,Write,List,WebFetch"
+          --disallowedTools "Bash"
 
     - name: Upload test report and screenshots
       if: always()

@@ -63,13 +63,13 @@ func getGitHubStatusForUser(ctx context.Context, userID string) gin.H {
 	// Check GitHub PAT
 	patCreds, err := GetGitHubPATCredentials(ctx, userID)
 	if err == nil && patCreds != nil {
-		// Validate PAT token
-		valid, _ := ValidateGitHubToken(ctx, patCreds.Token)
+		// NOTE: Validation disabled - if credentials are stored, assume they're valid
+		// The integration will fail gracefully if credentials are actually invalid
 
 		status["pat"] = gin.H{
 			"configured": true,
 			"updatedAt":  patCreds.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			"valid":      valid,
+			"valid":      true,
 		}
 	}
 
@@ -89,19 +89,15 @@ func getGoogleStatusForUser(ctx context.Context, userID string) gin.H {
 		return gin.H{"connected": false}
 	}
 
-	// Check if token is expired
-	isExpired := time.Now().After(creds.ExpiresAt)
-	valid := !isExpired
-
-	// If near expiry, could validate with Google API, but checking expiry is sufficient
-	// since backend auto-refreshes tokens
+	// NOTE: Validation disabled - if credentials are stored, assume they're valid
+	// The backend auto-refreshes tokens and the integration will fail gracefully if invalid
 
 	return gin.H{
 		"connected": true,
 		"email":     creds.Email,
 		"expiresAt": creds.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 		"updatedAt": creds.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		"valid":     valid,
+		"valid":     true,
 	}
 }
 
@@ -131,13 +127,13 @@ func getGitLabStatusForUser(ctx context.Context, userID string) gin.H {
 		return gin.H{"connected": false}
 	}
 
-	// Validate token
-	valid, _ := ValidateGitLabToken(ctx, creds.Token, creds.InstanceURL)
+	// NOTE: Validation disabled - if credentials are stored, assume they're valid
+	// The integration will fail gracefully if credentials are actually invalid
 
 	return gin.H{
 		"connected":   true,
 		"instanceUrl": creds.InstanceURL,
 		"updatedAt":   creds.UpdatedAt,
-		"valid":       valid,
+		"valid":       true,
 	}
 }

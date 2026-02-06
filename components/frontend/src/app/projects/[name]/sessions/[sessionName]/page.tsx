@@ -2025,7 +2025,7 @@ export default function ProjectSessionDetailPage({
                     maxSize={50}
                   >
                     <div className={cn(
-                      "flex flex-col h-[calc(100vh-8rem)] pt-6 pl-6 bg-card relative",
+                      "flex flex-col h-[calc(100vh-8rem)] pt-6 px-6 bg-card relative",
                       phase !== "Running" && "pointer-events-none"
                     )}>
                       {/* Backdrop blur layer for entire sidebar */}
@@ -2117,6 +2117,331 @@ export default function ProjectSessionDetailPage({
                             sessionPhase={phase}
                           />
                           <IntegrationsAccordion />
+
+                          {/* File Explorer */}
+                          <AccordionItem
+                            value="file-explorer"
+                            className="border rounded-lg px-3 bg-card"
+                          >
+                            <AccordionTrigger className="text-base font-semibold hover:no-underline py-3">
+                              <div className="flex items-center gap-2 w-full">
+                                <Folder className="h-4 w-4" />
+                                <span>File Explorer</span>
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] px-2 py-0.5"
+                                >
+                                  EXPERIMENTAL
+                                </Badge>
+                                {gitOps.gitStatus?.hasChanges && (
+                                  <div className="flex gap-1 ml-auto mr-2">
+                                    {(gitOps.gitStatus?.totalAdded ?? 0) > 0 && (
+                                      <Badge
+                                        variant="outline"
+                                        className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/50 dark:text-green-300 dark:border-green-800"
+                                      >
+                                        +{gitOps.gitStatus.totalAdded}
+                                      </Badge>
+                                    )}
+                                    {(gitOps.gitStatus?.totalRemoved ?? 0) > 0 && (
+                                      <Badge
+                                        variant="outline"
+                                        className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800"
+                                      >
+                                        -{gitOps.gitStatus.totalRemoved}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="pt-2 pb-3">
+                              <div className="space-y-3">
+                                <p className="text-sm text-muted-foreground">
+                                  Browse, view, and manage files in your workspace
+                                  directories. Track changes and sync with Git for
+                                  version control.
+                                </p>
+
+                                {/* Directory Selector */}
+                                <div className="flex items-center justify-between gap-2">
+                                  <Label className="text-xs text-muted-foreground">
+                                    Directory:
+                                  </Label>
+                                  <Select
+                                    value={`${selectedDirectory.type}:${selectedDirectory.path}`}
+                                    onValueChange={(value) => {
+                                      const [type, ...pathParts] = value.split(":");
+                                      const path = pathParts.join(":");
+                                      const option = directoryOptions.find(
+                                        (opt) =>
+                                          opt.type === type && opt.path === path,
+                                      );
+                                      if (option) setSelectedDirectory(option);
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-[300px] h-auto min-h-[2.5rem] py-2.5 overflow-visible">
+                                      <div className="flex items-center gap-2 flex-wrap w-full pr-6 overflow-visible">
+                                        <SelectValue />
+                                      </div>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {directoryOptions.map((opt) => {
+                                        // Find branch info for repo directories from real-time status
+                                        let branchName: string | undefined;
+                                        if (opt.type === "repo") {
+                                          const repoName = opt.path.replace(/^repos\//, "");
+                                          const realtimeRepo = reposStatus?.repos?.find(
+                                            (r) => r.name === repoName
+                                          );
+                                          const reconciledRepo = session?.status?.reconciledRepos?.find(
+                                            (r: ReconciledRepo) => {
+                                              const rName = r.name || r.url?.split("/").pop()?.replace(".git", "");
+                                              return rName === repoName;
+                                            }
+                                          );
+                                          branchName = realtimeRepo?.currentActiveBranch
+                                            || reconciledRepo?.currentActiveBranch
+                                            || reconciledRepo?.branch;
+                                        }
+
+                                        return (
+                                          <SelectItem
+                                            key={`${opt.type}:${opt.path}`}
+                                            value={`${opt.type}:${opt.path}`}
+                                            className="py-2"
+                                          >
+                                            <div className="flex items-center gap-2 flex-wrap w-full">
+                                              {opt.type === "artifacts" && (
+                                                <Folder className="h-3 w-3" />
+                                              )}
+                                              {opt.type === "file-uploads" && (
+                                                <CloudUpload className="h-3 w-3" />
+                                              )}
+                                              {opt.type === "repo" && (
+                                                <GitBranch className="h-3 w-3" />
+                                              )}
+                                              {opt.type === "workflow" && (
+                                                <Sparkles className="h-3 w-3" />
+                                              )}
+                                              <span className="text-xs">
+                                                {opt.name}
+                                              </span>
+                                              {branchName && (
+                                                <Badge variant="outline" className="text-xs px-1.5 py-0.5 max-w-full !whitespace-normal !overflow-visible break-words bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+                                                  {branchName}
+                                                </Badge>
+                                              )}
+                                            </div>
+                                          </SelectItem>
+                                        );
+                                      })}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                {/* File Browser */}
+                                <div className="overflow-hidden">
+                                  <div className="px-2 py-1.5 border-y flex items-center justify-between bg-muted/30">
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground min-w-0 flex-1">
+                                      {(fileOps.currentSubPath ||
+                                        fileOps.viewingFile) && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={fileOps.navigateBack}
+                                          className="h-6 px-1.5 mr-1"
+                                        >
+                                          ← Back
+                                        </Button>
+                                      )}
+
+                                      <Folder className="inline h-3 w-3 mr-1 flex-shrink-0" />
+                                      <code className="bg-muted px-1 py-0.5 rounded text-xs truncate">
+                                        {selectedDirectory.path}
+                                        {fileOps.currentSubPath &&
+                                          `/${fileOps.currentSubPath}`}
+                                        {fileOps.viewingFile &&
+                                          `/${fileOps.viewingFile.path}`}
+                                      </code>
+                                    </div>
+
+                                    {fileOps.viewingFile ? (
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={fileOps.handleDownloadFile}
+                                          className="h-6 px-2 flex-shrink-0"
+                                          title="Download file"
+                                        >
+                                          <Download className="h-3 w-3" />
+                                        </Button>
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 px-2 flex-shrink-0"
+                                            >
+                                              <MoreVertical className="h-3 w-3" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end">
+                                            <DropdownMenuItem
+                                              disabled
+                                              className="text-xs text-muted-foreground"
+                                            >
+                                              Sync to Jira - Coming soon
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled
+                                              className="text-xs text-muted-foreground"
+                                            >
+                                              Sync to GDrive - Coming soon
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setUploadModalOpen(true)}
+                                          className="h-6 px-2 flex-shrink-0"
+                                          title="Upload files"
+                                        >
+                                          <CloudUpload className="h-3 w-3" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => refetchDirectoryFiles()}
+                                          className="h-6 px-2 flex-shrink-0"
+                                          title="Refresh"
+                                        >
+                                          <FolderSync className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="p-2 max-h-64 overflow-y-auto">
+                                    {fileOps.loadingFile ? (
+                                      <div className="flex items-center justify-center py-8">
+                                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                      </div>
+                                    ) : fileOps.viewingFile ? (
+                                      <div className="text-xs">
+                                        <pre className="bg-muted/50 p-2 rounded overflow-x-auto">
+                                          <code>{fileOps.viewingFile.content}</code>
+                                        </pre>
+                                      </div>
+                                    ) : directoryFiles.length === 0 ? (
+                                      <div className="text-center py-4 text-sm text-muted-foreground">
+                                        <FolderTree className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                                        <p>No files yet</p>
+                                        <p className="text-xs mt-1">
+                                          Files will appear here
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <FileTree
+                                        nodes={directoryFiles.map(
+                                          (item): FileTreeNode => {
+                                            const node: FileTreeNode = {
+                                              name: item.name,
+                                              path: item.path,
+                                              type: item.isDir ? "folder" : "file",
+                                              sizeKb: item.size
+                                                ? item.size / 1024
+                                                : undefined,
+                                            };
+                                            return node;
+                                          },
+                                        )}
+                                        onSelect={fileOps.handleFileOrFolderSelect}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Simplified Git Status Display */}
+                                <div className="space-y-2">
+                                  {/* GitHub Not Configured Warning */}
+                                  {!githubConfigured && (
+                                    <Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/50">
+                                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
+                                      <AlertTitle className="text-amber-900 dark:text-amber-100">GitHub Not Configured</AlertTitle>
+                                      <AlertDescription className="text-amber-800 dark:text-amber-200">
+                                        Configure GitHub integration in{" "}
+                                        <a
+                                          href={`/projects/${projectName}?section=settings`}
+                                          className="underline font-medium hover:text-amber-900 dark:hover:text-amber-100"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          workspace settings
+                                        </a>
+                                        {" "}to enable git operations.
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
+
+                                  {/* State 1: No Git Initialized */}
+                                  {!gitOps.gitStatus?.initialized ? (
+                                    <div className="text-sm text-muted-foreground py-2">
+                                      <p>No git repository. Ask the agent to initialize git if needed.</p>
+                                    </div>
+                                  ) : !hasRemote ? (
+                                    /* State 2: Has Git, No Remote */
+                                    <div className="space-y-2">
+                                      <div className="border rounded-md px-2 py-1.5 text-xs">
+                                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                                          <GitBranch className="h-3 w-3" />
+                                          <span>{currentBranch}</span>
+                                          <span className="text-muted-foreground/50">(local only)</span>
+                                        </div>
+                                      </div>
+                                      <Button
+                                        onClick={() => setRemoteDialogOpen(true)}
+                                        size="sm"
+                                        variant="outline"
+                                        className="w-full"
+                                        disabled={!githubConfigured}
+                                      >
+                                        <Cloud className="mr-2 h-3 w-3" />
+                                        Configure Remote
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    /* State 3: Has Git + Remote */
+                                    <div className="border rounded-md px-2 py-1.5 space-y-1">
+                                      {/* Remote Repository */}
+                                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                        <Cloud className="h-3 w-3 flex-shrink-0" />
+                                        <span className="truncate">
+                                          {remoteUrl
+                                            ?.split("/")
+                                            .slice(-2)
+                                            .join("/")
+                                            .replace(".git", "") || ""}
+                                        </span>
+                                      </div>
+
+                                      {/* Branch Tracking */}
+                                      <div className="flex items-center gap-1.5 text-xs">
+                                        <GitBranch className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                                        <span className="text-muted-foreground">
+                                          {currentBranch}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
                   </Accordion>
                 </div>
 

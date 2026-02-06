@@ -265,7 +265,8 @@ jobs:
         run: |
           oc set env deployment/frontend -n ambient-code -c frontend \
             GITHUB_APP_SLUG="ambient-code-stage" \
-            VTEAM_VERSION="${{ github.sha }}"
+            VTEAM_VERSION="${{ github.sha }}" \
+            FEEDBACK_URL="https://forms.gle/7XiWrvo6No922DUz6"
 
       - name: Update backend environment variables
         if: needs.detect-changes.outputs.backend == 'true'
@@ -328,7 +329,8 @@ jobs:
         run: |
           oc set env deployment/frontend -n ambient-code -c frontend \
             GITHUB_APP_SLUG="ambient-code-stage" \
-            VTEAM_VERSION="${{ github.sha }}"
+            VTEAM_VERSION="${{ github.sha }}" \
+            FEEDBACK_URL="https://forms.gle/7XiWrvo6No922DUz6"
 
       - name: Update backend environment variables
         run: |

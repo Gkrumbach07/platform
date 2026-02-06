@@ -5,14 +5,15 @@ Tests the enhanced _check_mcp_authentication() logic that validates
 token structure, expiry, and refresh token availability.
 """
 
-import pytest
 import json
-import tempfile
 import os
 import sys
-from pathlib import Path
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 # Add parent directory to path to import main module
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,7 +43,8 @@ class TestGoogleAuthValidation:
         from main import _check_mcp_authentication
 
         # Patch Path to point to our temp locations (but files don't exist yet)
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -63,7 +65,8 @@ class TestGoogleAuthValidation:
         # Create empty file
         temp_workspace_creds.touch()
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -84,14 +87,17 @@ class TestGoogleAuthValidation:
             "user@gmail.com": {
                 "access_token": "ya29.valid_token",
                 "refresh_token": "1//valid_refresh",
-                "token_expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-                "email": "user@gmail.com"
+                "token_expiry": (
+                    datetime.now(timezone.utc) + timedelta(hours=1)
+                ).isoformat(),
+                "email": "user@gmail.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -112,13 +118,14 @@ class TestGoogleAuthValidation:
                 "access_token": "ya29.valid_token",
                 "refresh_token": "1//valid_refresh",
                 "token_expiry": "2026-12-31T23:59:59Z",  # Z-suffix format
-                "email": "user@gmail.com"
+                "email": "user@gmail.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -138,14 +145,17 @@ class TestGoogleAuthValidation:
             "user@gmail.com": {
                 "access_token": "ya29.expired_token",
                 "refresh_token": "1//valid_refresh",
-                "token_expiry": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-                "email": "user@gmail.com"
+                "token_expiry": (
+                    datetime.now(timezone.utc) - timedelta(hours=1)
+                ).isoformat(),
+                "email": "user@gmail.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -165,14 +175,17 @@ class TestGoogleAuthValidation:
             "user@gmail.com": {
                 "access_token": "ya29.expired_token",
                 "refresh_token": "",
-                "token_expiry": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-                "email": "user@gmail.com"
+                "token_expiry": (
+                    datetime.now(timezone.utc) - timedelta(hours=1)
+                ).isoformat(),
+                "email": "user@gmail.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -197,7 +210,8 @@ class TestGoogleAuthValidation:
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -215,7 +229,8 @@ class TestGoogleAuthValidation:
 
         temp_workspace_creds.write_text("{ invalid json")
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -235,13 +250,14 @@ class TestGoogleAuthValidation:
             "user@example.com": {
                 "access_token": "ya29.token",
                 "refresh_token": "1//refresh",
-                "email": "user@example.com"
+                "email": "user@example.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -262,13 +278,14 @@ class TestGoogleAuthValidation:
                 "access_token": "ya29.token",
                 "refresh_token": "1//refresh",
                 "token_expiry": "not-a-valid-timestamp",
-                "email": "user@gmail.com"
+                "email": "user@gmail.com",
             }
         }
 
         temp_workspace_creds.write_text(json.dumps(creds))
 
-        with patch('main.Path') as mock_path_class:
+        with patch("main.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -297,14 +314,15 @@ class TestUserEmailExtraction:
             "test.user@gmail.com": {
                 "access_token": "ya29.token",
                 "refresh_token": "1//refresh",
-                "email": "test.user@gmail.com"
+                "email": "test.user@gmail.com",
             }
         }
         temp_workspace_creds.write_text(json.dumps(creds))
 
         adapter = ClaudeCodeAdapter()
 
-        with patch('adapter.Path') as mock_path_class:
+        with patch("adapter.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -324,7 +342,7 @@ class TestUserEmailExtraction:
             "user@example.com": {
                 "access_token": "ya29.token",
                 "refresh_token": "1//refresh",
-                "email": "user@example.com"
+                "email": "user@example.com",
             }
         }
         temp_workspace_creds.write_text(json.dumps(creds))
@@ -334,7 +352,8 @@ class TestUserEmailExtraction:
 
         adapter = ClaudeCodeAdapter()
 
-        with patch('adapter.Path') as mock_path_class:
+        with patch("adapter.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -360,7 +379,8 @@ class TestUserEmailExtraction:
 
         adapter = ClaudeCodeAdapter()
 
-        with patch('adapter.Path') as mock_path_class:
+        with patch("adapter.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds
@@ -383,7 +403,8 @@ class TestUserEmailExtraction:
 
         adapter = ClaudeCodeAdapter()
 
-        with patch('adapter.Path') as mock_path_class:
+        with patch("adapter.Path") as mock_path_class:
+
             def path_side_effect(path_str):
                 if "/workspace/.google_workspace_mcp" in str(path_str):
                     return temp_workspace_creds

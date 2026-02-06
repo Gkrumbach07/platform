@@ -22,15 +22,16 @@ Run with:
     GOOGLE_DRIVE_E2E_TEST=true python -m pytest tests/test_google_drive_e2e.py -v
 """
 
-import pytest
-import os
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 
 @pytest.mark.skipif(
     not os.getenv("GOOGLE_DRIVE_E2E_TEST"),
-    reason="Requires GOOGLE_DRIVE_E2E_TEST=true and real credentials"
+    reason="Requires GOOGLE_DRIVE_E2E_TEST=true and real credentials",
 )
 @pytest.mark.asyncio
 async def test_google_drive_authentication_flow():
@@ -44,6 +45,7 @@ async def test_google_drive_authentication_flow():
     4. User email is extracted correctly (not placeholder)
     """
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
     from adapter import ClaudeCodeAdapter
@@ -58,7 +60,7 @@ async def test_google_drive_authentication_flow():
     )
 
     # Validate credentials format
-    with open(test_creds_path, 'r') as f:
+    with open(test_creds_path, "r") as f:
         creds = json.load(f)
 
     assert len(creds) > 0, "Credentials file is empty"
@@ -73,8 +75,7 @@ async def test_google_drive_authentication_flow():
     workspace_path.mkdir(parents=True, exist_ok=True)
 
     context = RunnerContext(
-        session_id="test-session-google-drive",
-        workspace_path=str(workspace_path)
+        session_id="test-session-google-drive", workspace_path=str(workspace_path)
     )
 
     # Copy test credentials to workspace location (simulating Secret mount)
@@ -92,7 +93,8 @@ async def test_google_drive_authentication_flow():
     # Patch the paths in adapter to use our test locations
     from unittest.mock import patch
 
-    with patch('adapter.Path') as mock_path:
+    with patch("adapter.Path") as mock_path:
+
         def path_factory(path_str):
             if "/app/.google_workspace_mcp" in str(path_str):
                 return secret_mount_file.parent / Path(path_str).name
@@ -110,12 +112,15 @@ async def test_google_drive_authentication_flow():
     user_google_email = os.getenv("USER_GOOGLE_EMAIL")
     assert user_google_email is not None, "USER_GOOGLE_EMAIL should be set"
     assert user_google_email != "user@example.com", "Should not be placeholder email"
-    assert user_google_email == user_email, f"Expected {user_email}, got {user_google_email}"
+    assert (
+        user_google_email == user_email
+    ), f"Expected {user_email}, got {user_google_email}"
 
     print(f"✓ USER_GOOGLE_EMAIL correctly set to: {user_google_email}")
 
     # Test 2: Verify authentication status
-    with patch('main.Path') as mock_path:
+    with patch("main.Path") as mock_path:
+
         def path_factory(path_str):
             if "/workspace/.google_workspace_mcp" in str(path_str):
                 return workspace_creds_file
@@ -128,7 +133,10 @@ async def test_google_drive_authentication_flow():
 
         is_auth, msg = _check_mcp_authentication("google-workspace")
 
-    assert is_auth in (True, None), f"Expected True or None (refresh needed), got {is_auth}: {msg}"
+    assert is_auth in (
+        True,
+        None,
+    ), f"Expected True or None (refresh needed), got {is_auth}: {msg}"
     assert user_email in msg, f"Expected user email in message, got: {msg}"
 
     if is_auth is True:
@@ -140,13 +148,14 @@ async def test_google_drive_authentication_flow():
 
     # Cleanup
     import shutil
+
     shutil.rmtree(workspace_path, ignore_errors=True)
     shutil.rmtree(secret_mount_dir.parent, ignore_errors=True)
 
 
 @pytest.mark.skipif(
     not os.getenv("GOOGLE_DRIVE_E2E_TEST"),
-    reason="Requires GOOGLE_DRIVE_E2E_TEST=true and real credentials"
+    reason="Requires GOOGLE_DRIVE_E2E_TEST=true and real credentials",
 )
 @pytest.mark.asyncio
 async def test_google_drive_tool_invocation():
@@ -158,7 +167,9 @@ async def test_google_drive_tool_invocation():
 
     TODO: Implement actual tool invocation test with Claude SDK
     """
-    pytest.skip("Tool invocation test not yet implemented - requires Claude SDK integration")
+    pytest.skip(
+        "Tool invocation test not yet implemented - requires Claude SDK integration"
+    )
 
 
 if __name__ == "__main__":

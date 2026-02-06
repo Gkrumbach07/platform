@@ -26,25 +26,13 @@ from urllib.parse import urlparse, urlunparse
 os.umask(0o022)
 
 # AG-UI Protocol Events
-from ag_ui.core import (
-    BaseEvent,
-    EventType,
-    RawEvent,
-    RunAgentInput,
-    RunErrorEvent,
-    RunFinishedEvent,
-    RunStartedEvent,
-    StateDeltaEvent,
-    StateSnapshotEvent,
-    StepFinishedEvent,
-    StepStartedEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallStartEvent,
-)
+from ag_ui.core import (BaseEvent, EventType, RawEvent, RunAgentInput,
+                        RunErrorEvent, RunFinishedEvent, RunStartedEvent,
+                        StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent,
+                        StepStartedEvent, TextMessageContentEvent,
+                        TextMessageEndEvent, TextMessageStartEvent,
+                        ToolCallArgsEvent, ToolCallEndEvent,
+                        ToolCallStartEvent)
 
 from context import RunnerContext
 
@@ -90,13 +78,13 @@ class ClaudeCodeAdapter:
         # No longer copying from mounted volumes or reading from env vars
         # This ensures tokens are always fresh for long-running sessions
         logger.info("Credentials will be fetched on-demand from backend API")
-        
+
         # Workspace is already prepared by init container (hydrate.sh)
         # - Repos cloned to /workspace/repos/
         # - Workflows cloned to /workspace/workflows/
         # - State hydrated from S3 to .claude/, artifacts/, file-uploads/
         logger.info("Workspace prepared by init container, validating...")
-            
+
         # Validate prerequisite files exist for phase-based commands
         try:
             await self._validate_prerequisites()
@@ -366,19 +354,12 @@ class ClaudeCodeAdapter:
                 os.environ["CLOUD_ML_REGION"] = vertex_credentials.get("region", "")
 
             # NOW we can safely import the SDK
-            from claude_agent_sdk import (
-                AssistantMessage,
-                ClaudeAgentOptions,
-                ClaudeSDKClient,
-                ResultMessage,
-                SystemMessage,
-                TextBlock,
-                ThinkingBlock,
-                ToolResultBlock,
-                ToolUseBlock,
-                UserMessage,
-                create_sdk_mcp_server,
-            )
+            from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions,
+                                          ClaudeSDKClient, ResultMessage,
+                                          SystemMessage, TextBlock,
+                                          ThinkingBlock, ToolResultBlock,
+                                          ToolUseBlock, UserMessage,
+                                          create_sdk_mcp_server)
             from claude_agent_sdk import tool as sdk_tool
             from claude_agent_sdk.types import StreamEvent
 
@@ -476,8 +457,12 @@ class ClaudeCodeAdapter:
                         mcp_auth_warnings.append(f"ℹ️  {server_name}: {msg}")
 
             if mcp_auth_warnings:
-                warning_msg = "**MCP Server Authentication Issues:**\n\n" + "\n".join(mcp_auth_warnings)
-                warning_msg += "\n\nThese servers may not work correctly until re-authenticated."
+                warning_msg = "**MCP Server Authentication Issues:**\n\n" + "\n".join(
+                    mcp_auth_warnings
+                )
+                warning_msg += (
+                    "\n\nThese servers may not work correctly until re-authenticated."
+                )
                 logger.warning(warning_msg)
 
                 # Send as RAW event (not chat message) so UI can display as banner/notification
@@ -489,8 +474,11 @@ class ClaudeCodeAdapter:
                     event={
                         "type": "mcp_authentication_warning",
                         "message": warning_msg,
-                        "servers": [s.split(": ")[1] if ": " in s else s for s in mcp_auth_warnings]
-                    }
+                        "servers": [
+                            s.split(": ")[1] if ": " in s else s
+                            for s in mcp_auth_warnings
+                        ],
+                    },
                 )
 
             # Create custom session control tools
@@ -1106,6 +1094,7 @@ class ClaudeCodeAdapter:
     def _map_to_vertex_model(self, model: str) -> str:
         """Map Anthropic API model names to Vertex AI model names."""
         model_map = {
+            "claude-opus-4-6": "claude-opus-4-6",
             "claude-opus-4-5": "claude-opus-4-5@20251101",
             "claude-opus-4-1": "claude-opus-4-1@20250805",
             "claude-sonnet-4-5": "claude-sonnet-4-5@20250929",
@@ -1362,11 +1351,11 @@ class ClaudeCodeAdapter:
 
     async def _populate_runtime_credentials(self) -> None:
         """Fetch all credentials from backend and populate environment variables.
-        
+
         This is called before each SDK run to ensure MCP servers have fresh tokens.
         """
         logger.info("Fetching fresh credentials from backend API...")
-        
+
         # Fetch Google credentials
         google_creds = await self._fetch_google_credentials()
         if google_creds.get("accessToken"):
@@ -1374,11 +1363,11 @@ class ClaudeCodeAdapter:
             creds_dir = Path("/workspace/.google_workspace_mcp/credentials")
             creds_dir.mkdir(parents=True, exist_ok=True)
             creds_file = creds_dir / "credentials.json"
-            
+
             # Get OAuth client config from env
             client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
             client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
-            
+
             # Create credentials.json for workspace-mcp
             creds_data = {
                 "token": google_creds.get("accessToken"),
@@ -1389,18 +1378,20 @@ class ClaudeCodeAdapter:
                 "scopes": google_creds.get("scopes", []),
                 "expiry": google_creds.get("expiresAt", ""),
             }
-            
+
             with open(creds_file, "w") as f:
                 _json.dump(creds_data, f, indent=2)
             creds_file.chmod(0o644)
             logger.info("✓ Updated Google credentials file for workspace-mcp")
-            
+
             # Set USER_GOOGLE_EMAIL for MCP server (from backend API response)
             user_email = google_creds.get("email", "")
             if user_email and user_email != "user@example.com":
                 os.environ["USER_GOOGLE_EMAIL"] = user_email
-                logger.info(f"✓ Set USER_GOOGLE_EMAIL to {user_email} for workspace-mcp")
-        
+                logger.info(
+                    f"✓ Set USER_GOOGLE_EMAIL to {user_email} for workspace-mcp"
+                )
+
         # Fetch Jira credentials
         jira_creds = await self._fetch_jira_credentials()
         if jira_creds.get("apiToken"):
@@ -1408,37 +1399,41 @@ class ClaudeCodeAdapter:
             os.environ["JIRA_API_TOKEN"] = jira_creds.get("apiToken", "")
             os.environ["JIRA_EMAIL"] = jira_creds.get("email", "")
             logger.info("✓ Updated Jira credentials in environment")
-        
+
         # Fetch GitLab token
         gitlab_token = await self._fetch_gitlab_token()
         if gitlab_token:
             os.environ["GITLAB_TOKEN"] = gitlab_token
             logger.info("✓ Updated GitLab token in environment")
-        
+
         # Fetch GitHub token (PAT or App)
         github_token = await self._fetch_github_token()
         if github_token:
             os.environ["GITHUB_TOKEN"] = github_token
             logger.info("✓ Updated GitHub token in environment")
-        
+
         logger.info("Runtime credentials populated successfully")
 
     async def _fetch_credential(self, credential_type: str) -> dict:
         """Fetch credentials from backend API at runtime.
-        
+
         Args:
             credential_type: One of 'github', 'google', 'jira', 'gitlab'
-            
+
         Returns:
             Dictionary with credential data or empty dict if unavailable
         """
         base = os.getenv("BACKEND_API_URL", "").rstrip("/")
-        project = os.getenv("PROJECT_NAME") or os.getenv("AGENTIC_SESSION_NAMESPACE", "")
+        project = os.getenv("PROJECT_NAME") or os.getenv(
+            "AGENTIC_SESSION_NAMESPACE", ""
+        )
         project = project.strip()
         session_id = self.context.session_id
 
         if not base or not project or not session_id:
-            logger.warning(f"Cannot fetch {credential_type} credentials: missing environment variables (base={base}, project={project}, session={session_id})")
+            logger.warning(
+                f"Cannot fetch {credential_type} credentials: missing environment variables (base={base}, project={project}, session={session_id})"
+            )
             return {}
 
         url = f"{base}/projects/{project}/agentic-sessions/{session_id}/credentials/{credential_type}"
@@ -1465,7 +1460,9 @@ class ClaudeCodeAdapter:
 
         try:
             data = _json.loads(resp_text)
-            logger.info(f"Successfully fetched {credential_type} credentials from backend")
+            logger.info(
+                f"Successfully fetched {credential_type} credentials from backend"
+            )
             return data
         except Exception as e:
             logger.error(f"Failed to parse {credential_type} credential response: {e}")
@@ -1483,14 +1480,18 @@ class ClaudeCodeAdapter:
         """Fetch Google OAuth credentials from backend API."""
         data = await self._fetch_credential("google")
         if data.get("accessToken"):
-            logger.info(f"Using fresh Google credentials from backend (email: {data.get('email', 'unknown')})")
+            logger.info(
+                f"Using fresh Google credentials from backend (email: {data.get('email', 'unknown')})"
+            )
         return data
 
     async def _fetch_jira_credentials(self) -> dict:
         """Fetch Jira credentials from backend API."""
         data = await self._fetch_credential("jira")
         if data.get("apiToken"):
-            logger.info(f"Using Jira credentials from backend (url: {data.get('url', 'unknown')})")
+            logger.info(
+                f"Using Jira credentials from backend (url: {data.get('url', 'unknown')})"
+            )
         return data
 
     async def _fetch_gitlab_token(self) -> str:
@@ -1498,14 +1499,18 @@ class ClaudeCodeAdapter:
         data = await self._fetch_credential("gitlab")
         token = data.get("token", "")
         if token:
-            logger.info(f"Using fresh GitLab token from backend (instance: {data.get('instanceUrl', 'unknown')})")
+            logger.info(
+                f"Using fresh GitLab token from backend (instance: {data.get('instanceUrl', 'unknown')})"
+            )
         return token
 
     async def _fetch_github_token_legacy(self) -> str:
         """Legacy method - kept for backward compatibility."""
         # Build mint URL from environment
         base = os.getenv("BACKEND_API_URL", "").rstrip("/")
-        project = os.getenv("PROJECT_NAME") or os.getenv("AGENTIC_SESSION_NAMESPACE", "")
+        project = os.getenv("PROJECT_NAME") or os.getenv(
+            "AGENTIC_SESSION_NAMESPACE", ""
+        )
         project = project.strip()
         session_id = self.context.session_id
 
@@ -1645,7 +1650,7 @@ class ClaudeCodeAdapter:
         """Recursively expand ${VAR} and ${VAR:-default} patterns in config values."""
         if isinstance(value, str):
             # Pattern: ${VAR} or ${VAR:-default}
-            pattern = r'\$\{([^}:]+)(?::-([^}]*))?\}'
+            pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
 
             def replace_var(match):
                 var_name = match.group(1)
@@ -1675,7 +1680,9 @@ class ClaudeCodeAdapter:
                     mcp_servers = config.get("mcpServers", {})
                     # Expand environment variables in the config
                     expanded = self._expand_env_vars(mcp_servers)
-                    logger.info(f"Expanded MCP config env vars for {len(expanded)} servers")
+                    logger.info(
+                        f"Expanded MCP config env vars for {len(expanded)} servers"
+                    )
                     return expanded
             else:
                 logger.info(f"No MCP config file found at: {runner_mcp_file}")

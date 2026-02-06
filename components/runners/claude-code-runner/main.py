@@ -665,28 +665,24 @@ def _check_mcp_authentication(server_name: str) -> tuple[bool | None, str | None
 @app.get("/mcp/status")
 async def get_mcp_status():
     """
-    Returns MCP servers configured for this session with authentication status.
-    Goes straight to the source - uses adapter's _load_mcp_config() method.
-
-    For known integrations (Google, Jira), also checks if credentials are present.
+    Returns MCP server connection status by using the SDK's get_mcp_status() method.
+    Spins up a minimal ClaudeSDKClient, queries MCP status, then tears it down.
     """
     try:
         global adapter
 
-        if not adapter:
+        if not adapter or not adapter.context:
             return {
                 "servers": [],
                 "totalCount": 0,
                 "message": "Adapter not initialized yet",
             }
 
-        mcp_servers_list = []
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        import config as runner_config
 
-        # Get the working directory (same logic as adapter uses)
-        workspace_path = (
-            adapter.context.workspace_path if adapter.context else "/workspace"
-        )
-
+        # Resolve working directory (same logic as adapter)
+        workspace_path = adapter.context.workspace_path or "/workspace"
         active_workflow_url = os.getenv("ACTIVE_WORKFLOW_GIT_URL", "").strip()
         cwd_path = workspace_path
 
@@ -696,40 +692,63 @@ async def get_mcp_status():
             if os.path.exists(workflow_path):
                 cwd_path = workflow_path
 
-        # Use adapter's method to load MCP config (same as it does during runs)
-        mcp_config = adapter._load_mcp_config(cwd_path)
-        logger.info(f"MCP config: {mcp_config}")
+        # Load MCP server config (same config the adapter uses for runs)
+        mcp_servers = runner_config.load_mcp_config(adapter.context, cwd_path) or {}
 
-        if mcp_config:
-            for server_name, server_config in mcp_config.items():
-                # Check authentication status for known servers (Google, Jira)
-                is_authenticated, auth_message = _check_mcp_authentication(server_name)
+        # Build minimal options — just enough to initialise MCP servers
+        options = ClaudeAgentOptions(
+            cwd=cwd_path,
+            permission_mode="acceptEdits",
+            mcp_servers=mcp_servers,
+        )
 
-                # Platform servers are built-in (webfetch), workflow servers come from config
-                is_platform = server_name == "webfetch"
+        client = ClaudeSDKClient(options=options)
+        try:
+            logger.info("MCP Status: Connecting ephemeral SDK client...")
+            await client.connect()
 
-                server_info = {
-                    "name": server_name,
-                    "displayName": server_name.replace("-", " ")
-                    .replace("_", " ")
-                    .title(),
-                    "status": "configured",
-                    "command": server_config.get("command", ""),
-                    "source": "platform" if is_platform else "workflow",
-                }
+            # Use the SDK's public get_mcp_status() method (added in v0.1.23)
+            sdk_status = await client.get_mcp_status()
+            logger.info("MCP Status: SDK returned:\n%s", json.dumps(sdk_status, indent=2, default=str))
 
-                # Only include auth fields for servers we know how to check
-                if is_authenticated is not None:
-                    server_info["authenticated"] = is_authenticated
-                    server_info["authMessage"] = auth_message
+            # SDK returns: { mcpServers: [{ name, status, serverInfo: { name, version }, scope, tools }] }
+            raw_servers = []
+            if isinstance(sdk_status, dict):
+                raw_servers = sdk_status.get("mcpServers", [])
+            elif isinstance(sdk_status, list):
+                raw_servers = sdk_status
 
-                mcp_servers_list.append(server_info)
+            servers_list = []
+            for srv in raw_servers:
+                if not isinstance(srv, dict):
+                    continue
+                server_info = srv.get("serverInfo") or {}
+                raw_tools = srv.get("tools") or []
+                tools = [
+                    {
+                        "name": t.get("name", ""),
+                        "annotations": {
+                            k: v for k, v in (t.get("annotations") or {}).items()
+                        },
+                    }
+                    for t in raw_tools
+                    if isinstance(t, dict)
+                ]
+                servers_list.append({
+                    "name": srv.get("name", ""),
+                    "displayName": server_info.get("name", srv.get("name", "")),
+                    "status": srv.get("status", "unknown"),
+                    "version": server_info.get("version", ""),
+                    "tools": tools,
+                })
 
-        return {
-            "servers": mcp_servers_list,
-            "totalCount": len(mcp_servers_list),
-            "note": "Status shows 'configured' - check 'authenticated' field for credential status",
-        }
+            return {
+                "servers": servers_list,
+                "totalCount": len(servers_list),
+            }
+        finally:
+            logger.info("MCP Status: Disconnecting ephemeral SDK client...")
+            await client.disconnect()
 
     except Exception as e:
         logger.error(f"Failed to get MCP status: {e}", exc_info=True)

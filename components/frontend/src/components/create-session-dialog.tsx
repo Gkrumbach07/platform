@@ -32,11 +32,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import type { CreateAgenticSessionRequest } from "@/types/agentic-session";
 import { useCreateSession } from "@/services/queries/use-sessions";
-import { useProjectIntegrationStatus } from "@/services/queries/use-projects";
-import { useIntegrationSecrets } from "@/services/queries/use-secrets";
 import { useIntegrationsStatus } from "@/services/queries/use-integrations";
 import { errorToast } from "@/hooks/use-toast";
 
@@ -73,17 +70,12 @@ export function CreateSessionDialog({
   const router = useRouter();
   const createSessionMutation = useCreateSession();
 
-  const { data: integrationStatus } = useProjectIntegrationStatus(projectName);
-  const { data: integrationSecrets } = useIntegrationSecrets(projectName);
   const { data: integrationsStatus } = useIntegrationsStatus();
 
-  const githubConfigured = integrationStatus?.github ?? false;
+  const githubConfigured = integrationsStatus?.github?.active != null;
   const gitlabConfigured = integrationsStatus?.gitlab?.connected ?? false;
-  const byKey = integrationSecrets
-    ? Object.fromEntries(integrationSecrets.map((s) => [s.key, s.value]))
-    : {};
-  const atlassianConfigured =
-    !!(byKey.JIRA_URL?.trim() && byKey.JIRA_PROJECT?.trim() && byKey.JIRA_EMAIL?.trim() && byKey.JIRA_API_TOKEN?.trim());
+  const atlassianConfigured = integrationsStatus?.jira?.connected ?? false;
+  const googleConfigured = integrationsStatus?.google?.connected ?? false;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -201,47 +193,9 @@ export function CreateSessionDialog({
                 )}
               />
 
-              {/* Integration status (same visual style as integrations accordion), alphabetical: Jira, GitHub, Google Workspace */}
+              {/* Integration auth status */}
               <div className="w-full space-y-2">
                 <FormLabel>Integrations</FormLabel>
-                {/* Jira card */}
-                {atlassianConfigured ? (
-                  <div className="flex items-start justify-between gap-3 p-3 border rounded-lg bg-background/50">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-shrink-0">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                        </div>
-                        <h4 className="font-medium text-sm">Jira</h4>
-                        <Badge variant="secondary" className="text-xs font-normal">
-                          read only
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        MCP access to Jira issues and projects.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-3 p-3 border rounded-lg bg-background/50">
-                    <div className="flex-shrink-0">
-                      <AlertTriangle className="h-4 w-4 text-amber-500" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-medium text-sm">Jira</h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Configure{" "}
-                        <Link
-                          href="/integrations"
-                          className="text-primary hover:underline"
-                        >
-                          Integrations
-                        </Link>{" "}
-                        to access Jira MCP in this session.
-                      </p>
-                    </div>
-                  </div>
-                )}
                 {/* GitHub card */}
                 {githubConfigured ? (
                   <div className="flex items-start justify-between gap-3 p-3 border rounded-lg bg-background/50">
@@ -253,7 +207,7 @@ export function CreateSessionDialog({
                         <h4 className="font-medium text-sm">GitHub</h4>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        MCP access to GitHub repositories.
+                        Authenticated. Git push and repository access enabled.
                       </p>
                     </div>
                   </div>
@@ -265,11 +219,11 @@ export function CreateSessionDialog({
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium text-sm">GitHub</h4>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Configure{" "}
+                        Not connected.{" "}
                         <Link href="/integrations" className="text-primary hover:underline">
-                          Integrations
+                          Set up
                         </Link>{" "}
-                        to access GitHub MCP in this session.
+                        to enable repository access.
                       </p>
                     </div>
                   </div>
@@ -285,7 +239,7 @@ export function CreateSessionDialog({
                         <h4 className="font-medium text-sm">GitLab</h4>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        MCP access to GitLab repositories.
+                        Authenticated. Git push and repository access enabled.
                       </p>
                     </div>
                   </div>
@@ -297,31 +251,82 @@ export function CreateSessionDialog({
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium text-sm">GitLab</h4>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Configure{" "}
+                        Not connected.{" "}
                         <Link href="/integrations" className="text-primary hover:underline">
-                          Integrations
+                          Set up
                         </Link>{" "}
-                        to access GitLab MCP in this session.
+                        to enable repository access.
                       </p>
                     </div>
                   </div>
                 )}
                 {/* Google Workspace card */}
-                <div className="flex items-start gap-3 p-3 border rounded-lg bg-background/50">
-                  <div className="flex-shrink-0">
-                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                {googleConfigured ? (
+                  <div className="flex items-start justify-between gap-3 p-3 border rounded-lg bg-background/50">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-shrink-0">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        </div>
+                        <h4 className="font-medium text-sm">Google Workspace</h4>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Authenticated. Drive, Calendar, and Gmail access enabled.
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-medium text-sm">Google Workspace</h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Configure{" "}
-                      <Link href="/integrations" className="text-primary hover:underline">
-                        Integrations
-                      </Link>{" "}
-                      to access Google Workspace MCP in this session.
-                    </p>
+                ) : (
+                  <div className="flex items-start gap-3 p-3 border rounded-lg bg-background/50">
+                    <div className="flex-shrink-0">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-sm">Google Workspace</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Not connected.{" "}
+                        <Link href="/integrations" className="text-primary hover:underline">
+                          Set up
+                        </Link>{" "}
+                        to enable Drive, Calendar, and Gmail access.
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
+                {/* Jira card */}
+                {atlassianConfigured ? (
+                  <div className="flex items-start justify-between gap-3 p-3 border rounded-lg bg-background/50">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-shrink-0">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        </div>
+                        <h4 className="font-medium text-sm">Jira</h4>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Authenticated. Issue and project access enabled.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 p-3 border rounded-lg bg-background/50">
+                    <div className="flex-shrink-0">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-sm">Jira</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Not connected.{" "}
+                        <Link
+                          href="/integrations"
+                          className="text-primary hover:underline"
+                        >
+                          Set up
+                        </Link>{" "}
+                        to enable issue and project access.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <DialogFooter>

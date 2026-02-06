@@ -10,6 +10,7 @@ export type IntegrationsStatus = {
     pat: {
       configured: boolean
       updatedAt?: string
+      valid?: boolean
     }
     active?: 'app' | 'pat'
   }

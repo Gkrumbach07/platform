@@ -60,7 +60,7 @@ import { ManageRemoteDialog } from "./components/modals/manage-remote-dialog";
 import { WorkflowsAccordion } from "./components/accordions/workflows-accordion";
 import { RepositoriesAccordion } from "./components/accordions/repositories-accordion";
 import { ArtifactsAccordion } from "./components/accordions/artifacts-accordion";
-import { McpIntegrationsAccordion } from "./components/accordions/mcp-integrations-accordion";
+import { McpServersAccordion, IntegrationsAccordion } from "./components/accordions/mcp-integrations-accordion";
 import { WelcomeExperience } from "./components/welcome-experience";
 // Extracted hooks and utilities
 import { useGitOperations } from "./hooks/use-git-operations";
@@ -92,7 +92,7 @@ import {
   useOOTBWorkflows,
   useWorkflowMetadata,
 } from "@/services/queries/use-workflows";
-import { useProjectIntegrationStatus } from "@/services/queries/use-projects";
+import { useIntegrationsStatus } from "@/services/queries/use-integrations";
 import { useMutation } from "@tanstack/react-query";
 import { FeedbackProvider } from "@/contexts/FeedbackContext";
 
@@ -187,8 +187,8 @@ export default function ProjectSessionDetailPage({
   const continueMutation = useContinueSession();
   
   // Check integration status
-  const { data: integrationStatus } = useProjectIntegrationStatus(projectName);
-  const githubConfigured = integrationStatus?.github ?? false;
+  const { data: integrationsStatus } = useIntegrationsStatus();
+  const githubConfigured = integrationsStatus?.github?.active != null;
   
   // Get current user for feedback context
   const { data: currentUser } = useCurrentUser();
@@ -1636,10 +1636,13 @@ export default function ProjectSessionDetailPage({
                       onNavigateBack={artifactsOps.navigateBack}
                     />
 
-                    <McpIntegrationsAccordion
+                    <McpServersAccordion
                       projectName={projectName}
                       sessionName={sessionName}
+                      sessionPhase={phase}
                     />
+
+                    <IntegrationsAccordion />
 
                     {/* File Explorer */}
                     <AccordionItem

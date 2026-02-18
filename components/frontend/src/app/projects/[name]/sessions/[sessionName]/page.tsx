@@ -78,7 +78,7 @@ import { useSessionQueue } from "@/hooks/use-session-queue";
 import type { DirectoryOption, DirectoryRemote } from "./lib/types";
 
 import type { MessageObject, ToolUseMessages, HierarchicalToolMessage, ReconciledRepo, SessionRepo } from "@/types/agentic-session";
-import type { AGUIToolCall } from "@/types/agui";
+import type { PlatformToolCall } from "@/types/agui";
 
 // AG-UI streaming
 import { useAGUIStream } from "@/hooks/use-agui-stream";
@@ -752,17 +752,17 @@ export default function ProjectSessionDetailPage({
 
     // Helper function to create a tool message from a tool call
     const createToolMessage = (
-      tc: AGUIToolCall,
+      tc: PlatformToolCall,
       timestamp: string
     ): ToolUseMessages => {
-      const toolInput = parseToolArgs(tc.args);
+      const toolInput = parseToolArgs(tc.function.arguments);
       return {
         type: "tool_use_messages",
         timestamp,
         toolUseBlock: {
           type: "tool_use_block",
           id: tc.id,
-          name: tc.name,
+          name: tc.function.name,
           input: toolInput,
         },
         resultBlock: {
@@ -777,7 +777,7 @@ export default function ProjectSessionDetailPage({
     const result: Array<MessageObject | ToolUseMessages | HierarchicalToolMessage> = [];
     
     // Phase A: Collect all tool calls from all messages for hierarchy building
-    const allToolCalls = new Map<string, { tc: AGUIToolCall; timestamp: string }>();
+    const allToolCalls = new Map<string, { tc: PlatformToolCall; timestamp: string }>();
     
     for (const msg of aguiState.messages) {
       // Use msg.timestamp from backend, fallback to current time for legacy messages
@@ -786,7 +786,7 @@ export default function ProjectSessionDetailPage({
       
       if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
         for (const tc of msg.toolCalls) {
-          if (tc && tc.id && tc.name) {
+          if (tc && tc.id && tc.function?.name) {
             allToolCalls.set(tc.id, { tc, timestamp });
           }
         }
@@ -802,11 +802,13 @@ export default function ProjectSessionDetailPage({
       const toolName = aguiState.currentToolCall.name || "unknown_tool";  // Default if null
       
       // Create a pseudo-tool-call for the streaming tool
-      const streamingTC: AGUIToolCall = {
+      const streamingTC: PlatformToolCall = {
         id: streamingToolId,
-        name: toolName,
-        args: aguiState.currentToolCall.args || "",
         type: "function",
+        function: {
+          name: toolName,
+          arguments: aguiState.currentToolCall.args || "",
+        },
         parentToolUseId: streamingParentId,
         status: "running",
       };
@@ -866,7 +868,7 @@ export default function ProjectSessionDetailPage({
           // Don't promote to top-level - parent is streaming and will appear
         } else {
           // Parent truly not found, render as top-level (fallback)
-          console.warn(`  ⚠️ Orphaned child: ${tc.name} (${toolId.substring(0, 8)}) - parent ${tc.parentToolUseId.substring(0, 8)} not found`);
+          console.warn(`  ⚠️ Orphaned child: ${tc.function.name} (${toolId.substring(0, 8)}) - parent ${tc.parentToolUseId.substring(0, 8)} not found`);
           topLevelTools.add(toolId);
         }
       }
@@ -885,7 +887,7 @@ export default function ProjectSessionDetailPage({
         result.push({
           type: "user_message",
           id: msg.id,  // Preserve message ID for feedback association
-          content: { type: "text_block", text: msg.content || "" },
+          content: { type: "text_block", text: (typeof msg.content === 'string' ? msg.content : '') || "" },
           timestamp,
         });
       } else if (msg.role === "assistant") {
@@ -945,7 +947,7 @@ export default function ProjectSessionDetailPage({
       // Handle tool calls embedded in this message
       if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
         for (const tc of msg.toolCalls) {
-          if (!tc || !tc.id || !tc.name) continue;
+          if (!tc || !tc.id || !tc.function?.name) continue;
           
           // Skip if already rendered or if it's a child (will be rendered inside parent)
           if (renderedToolCalls.has(tc.id)) {
@@ -968,15 +970,15 @@ export default function ProjectSessionDetailPage({
             .filter((c): c is ToolUseMessages => c !== null);
           
           // Create the hierarchical tool message
-          const toolInput = parseToolArgs(tc.args);
-          
+          const toolInput = parseToolArgs(tc.function.arguments);
+
           const toolMessage: HierarchicalToolMessage = {
             type: "tool_use_messages",
             timestamp,
             toolUseBlock: {
               type: "tool_use_block",
               id: tc.id,
-              name: tc.name,
+              name: tc.function.name,
               input: toolInput,
             },
             resultBlock: {

@@ -530,6 +530,11 @@ class ClaudeAgentAdapter:
         
         # Track which tools we've already emitted START for (to avoid duplicates)
         processed_tool_ids: set = set()
+
+        # Map tool_call_id → display name for snapshot enrichment.
+        # Populated when we see ToolUseBlock / content_block_start so that
+        # the ToolMessage entries in MESSAGES_SNAPSHOT carry proper tool names.
+        tool_name_by_id: Dict[str, str] = {}
         
         # Frontend tool halt flag (like Strands pattern)
         halt_event_stream: bool = False  # Set to True when frontend tool completes
@@ -594,10 +599,12 @@ class ClaudeAgentAdapter:
         
         # Process response stream
         message_count = 0
-        
-        async for message in message_stream:
+        stream_error: Optional[Exception] = None
+
+        try:
+            async for message in message_stream:
                 message_count += 1
-                
+
                 # If we've halted due to frontend tool, break out of loop (interrupt already called)
                 if halt_event_stream:
                     logger.debug(f"[ClaudeSDKClient Message #{message_count}]: Halted - breaking stream loop")
@@ -682,7 +689,8 @@ class ClaudeAgentAdapter:
                             if current_tool_call_id:
                                 current_tool_display_name = strip_mcp_prefix(current_tool_call_name)
                                 processed_tool_ids.add(current_tool_call_id)
-                                
+                                tool_name_by_id[current_tool_call_id] = current_tool_display_name
+
                                 yield ToolCallStartEvent(
                                     type=EventType.TOOL_CALL_START,
                                     thread_id=thread_id,
@@ -836,6 +844,10 @@ class ClaudeAgentAdapter:
                             tool_id = getattr(block, 'id', None)
                             if tool_id and tool_id in processed_tool_ids:
                                 continue
+                            # Track tool name for snapshot enrichment
+                            raw_name = getattr(block, 'name', '') or 'unknown'
+                            if tool_id:
+                                tool_name_by_id[tool_id] = strip_mcp_prefix(raw_name)
                             updated_state, tool_events = await handle_tool_use_block(
                                 block, message, thread_id, run_id, self._current_state
                             )
@@ -899,10 +911,71 @@ class ClaudeAgentAdapter:
                             role="assistant",
                             content=result_text,
                         ))
-            
-        # Emit MESSAGES_SNAPSHOT with input messages + new messages from this run
+
+        except Exception as e:
+            # Capture for re-raise after cleanup
+            stream_error = e
+            logger.error(f"Fatal error in message stream: {e}")
+
+        finally:
+            # ── AG-UI event cleanup ──
+            # Close any hanging events so the frontend doesn't get stuck
+            # waiting for END events that will never arrive.
+            # Order matters: close innermost (tool/thinking) before text message.
+
+            if current_tool_call_id:
+                logger.debug(f"Cleanup: closing hanging TOOL_CALL_START for {current_tool_call_id}")
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    tool_call_id=current_tool_call_id,
+                )
+                current_tool_call_id = None
+
+            if in_thinking_block:
+                logger.debug("Cleanup: closing hanging thinking block")
+                yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+                yield ThinkingEndEvent(type=EventType.THINKING_END)
+                in_thinking_block = False
+
+            if has_streamed_text and current_message_id:
+                logger.debug(f"Cleanup: closing hanging TEXT_MESSAGE_START for {current_message_id}")
+                yield TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    message_id=current_message_id,
+                )
+
+            # Flush any pending message so MESSAGES_SNAPSHOT includes it
+            flush_pending_msg()
+
+        # Emit MESSAGES_SNAPSHOT with input messages + new messages from this run.
+        # Enrich tool result messages with tool names so the frontend can
+        # reconstruct parent-child hierarchy with proper display names.
         if run_messages:
-            all_messages = list(input_data.messages or []) + run_messages
+            enriched: List[Any] = []
+            for msg in run_messages:
+                # Check if this is a tool result message that needs a name
+                msg_role = getattr(msg, 'role', None)
+                msg_tcid = getattr(msg, 'tool_call_id', None)
+                if msg_role == 'tool' and msg_tcid and msg_tcid in tool_name_by_id:
+                    # Convert to dict so we can add the name field
+                    if hasattr(msg, 'model_dump'):
+                        d = msg.model_dump(exclude_none=True)
+                    elif hasattr(msg, 'dict'):
+                        d = msg.dict(exclude_none=True)
+                    else:
+                        d = {"id": getattr(msg, 'id', ''), "role": msg_role,
+                             "content": getattr(msg, 'content', ''),
+                             "tool_call_id": msg_tcid}
+                    d["name"] = tool_name_by_id[msg_tcid]
+                    enriched.append(d)
+                else:
+                    enriched.append(msg)
+
+            all_messages = list(input_data.messages or []) + enriched
             logger.debug(
                 f"MESSAGES_SNAPSHOT: {len(all_messages)} msgs ({message_count} SDK messages processed)"
             )
@@ -910,6 +983,8 @@ class ClaudeAgentAdapter:
                 type=EventType.MESSAGES_SNAPSHOT,
                 messages=all_messages,
             )
-        
-        # Errors propagate to run() which emits RunErrorEvent
+
+        # Re-raise to let run() emit RunErrorEvent
+        if stream_error is not None:
+            raise stream_error
 

@@ -2,23 +2,17 @@
 
 /**
  * AG-UI Event Stream Hook
- * 
+ *
  * EventSource-based hook for consuming AG-UI events from the backend.
  * Uses the same-origin SSE proxy to bypass browser EventSource auth limitations.
- * 
+ *
  * Reference: https://docs.ag-ui.com/concepts/events
  * Reference: https://docs.ag-ui.com/concepts/messages
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  AGUIClientState,
-  AGUIEvent,
-  AGUIEventType,
-  AGUIMessage,
-  AGUIRole,
-  AGUIStepStartedEvent,
-  AGUIToolCall,
+  EventType,
   isRunStartedEvent,
   isRunFinishedEvent,
   isRunErrorEvent,
@@ -31,52 +25,39 @@ import {
   isMessagesSnapshotEvent,
   isActivitySnapshotEvent,
 } from '@/types/agui'
+import type {
+  AGUIClientState,
+  PlatformEvent,
+  PlatformMessage,
+  PlatformToolCall,
+  PlatformActivity,
+  PlatformActivityPatch,
+  AGUIMetaEvent,
+} from '@/types/agui'
 
 /**
- * Normalize MESSAGES_SNAPSHOT data to match the internal AGUIMessage format.
+ * Normalize MESSAGES_SNAPSHOT data for the internal PlatformMessage format.
  *
- * The runner sends snapshots with two structural differences from streaming:
- * 1. OpenAI-format toolCalls ({type:"function", function:{name,arguments}})
- *    instead of flat AGUIToolCall ({name, args})
- * 2. Sub-agent child tool results as separate flat role=tool messages instead
- *    of nested toolCalls entries with parentToolUseId on the assistant message
+ * The runner sends snapshots where sub-agent child tool results appear as
+ * separate flat role=tool messages instead of nested toolCalls entries with
+ * parentToolUseId on the assistant message.
  *
- * This function converts both to match the structure built by streaming handlers,
- * so the page rendering code (which builds hierarchy from parentToolUseId) works
- * correctly for both live-streamed and snapshot-restored sessions.
+ * This function nests child tool messages under their parent tool call so
+ * the page rendering code (which builds hierarchy from parentToolUseId)
+ * works correctly for both live-streamed and snapshot-restored sessions.
+ *
+ * Note: Since we now use the @ag-ui/core ToolCall format natively
+ * ({type:"function", function:{name, arguments}}), no format conversion
+ * is needed — snapshots already arrive in the correct format.
  */
-function normalizeSnapshotMessages(snapshotMessages: AGUIMessage[]): AGUIMessage[] {
+function normalizeSnapshotMessages(snapshotMessages: PlatformMessage[]): PlatformMessage[] {
   // Shallow-clone messages so we can mutate toolCalls arrays safely
   const messages = snapshotMessages.map(m => ({
     ...m,
     toolCalls: m.toolCalls ? [...m.toolCalls] : undefined,
   }))
 
-  // Step 1: Normalize toolCalls format (OpenAI function → flat AGUIToolCall)
-  for (const msg of messages) {
-    if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
-      msg.toolCalls = msg.toolCalls.map(tc => {
-        // OpenAI format: {id, type:"function", function:{name, arguments}}
-        const fn = (tc as Record<string, unknown>).function as
-          { name?: string; arguments?: string } | undefined
-        if (fn && !tc.name) {
-          const normalized: AGUIToolCall = {
-            id: tc.id,
-            name: fn.name || 'unknown_tool',
-            args: fn.arguments || '',
-            type: tc.type,
-            parentToolUseId: tc.parentToolUseId,
-            result: tc.result,
-            status: tc.status,
-          }
-          return normalized
-        }
-        return tc
-      })
-    }
-  }
-
-  // Step 2: Identify parent tool call IDs from assistant messages' toolCalls
+  // Step 1: Identify parent tool call IDs from assistant messages' toolCalls
   const parentToolCallIds = new Set<string>()
   for (const msg of messages) {
     if (msg.role === 'assistant' && msg.toolCalls) {
@@ -88,21 +69,21 @@ function normalizeSnapshotMessages(snapshotMessages: AGUIMessage[]): AGUIMessage
 
   if (parentToolCallIds.size === 0) return messages
 
-  // Step 3: Find parent tool result message indices
+  // Step 2: Find parent tool result message indices
   const parentResultIndex = new Map<string, number>()
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
-    if (msg.role === 'tool' && msg.toolCallId && parentToolCallIds.has(msg.toolCallId)) {
+    if (msg.role === 'tool' && 'toolCallId' in msg && msg.toolCallId && parentToolCallIds.has(msg.toolCallId)) {
       parentResultIndex.set(msg.toolCallId, i)
     }
   }
 
-  // Step 4: Nest child tool messages under their parent tool call
+  // Step 3: Nest child tool messages under their parent tool call
   const indicesToRemove = new Set<number>()
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
-    if (msg.role !== 'tool' || !msg.toolCallId) continue
+    if (msg.role !== 'tool' || !('toolCallId' in msg) || !msg.toolCallId) continue
 
     if (parentToolCallIds.has(msg.toolCallId)) {
       // This is a parent tool result — move content to the parent's toolCall.result
@@ -111,7 +92,7 @@ function normalizeSnapshotMessages(snapshotMessages: AGUIMessage[]): AGUIMessage
         if (assistantMsg.role !== 'assistant' || !assistantMsg.toolCalls) continue
         const parentTC = assistantMsg.toolCalls.find(tc => tc.id === parentId)
         if (parentTC) {
-          parentTC.result = msg.content || ''
+          parentTC.result = ('content' in msg ? msg.content : '') as string || ''
           if (!parentTC.status) parentTC.status = 'completed'
           indicesToRemove.add(i)
           break
@@ -151,9 +132,12 @@ function normalizeSnapshotMessages(snapshotMessages: AGUIMessage[]): AGUIMessage
       if (!assistantMsg.toolCalls.some(tc => tc.id === msg.toolCallId)) {
         assistantMsg.toolCalls.push({
           id: msg.toolCallId,
-          name: msg.name || 'tool',
-          args: '',
-          result: msg.content || '',
+          type: 'function',
+          function: {
+            name: ('name' in msg ? msg.name : null) as string || 'tool',
+            arguments: '',
+          },
+          result: ('content' in msg ? msg.content : '') as string || '',
           status: 'completed',
           parentToolUseId: bestParentId,
         })
@@ -163,7 +147,7 @@ function normalizeSnapshotMessages(snapshotMessages: AGUIMessage[]): AGUIMessage
     }
   }
 
-  // Step 5: Remove nested messages from top level
+  // Step 4: Remove nested messages from top level
   return messages.filter((_, idx) => !indicesToRemove.has(idx))
 }
 
@@ -172,8 +156,8 @@ type UseAGUIStreamOptions = {
   sessionName: string
   runId?: string
   autoConnect?: boolean
-  onEvent?: (event: AGUIEvent) => void
-  onMessage?: (message: AGUIMessage) => void
+  onEvent?: (event: PlatformEvent) => void
+  onMessage?: (message: PlatformMessage) => void
   onError?: (error: string) => void
   onConnected?: () => void
   onDisconnected?: () => void
@@ -229,11 +213,11 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttemptsRef = useRef(0)
   const mountedRef = useRef(false)
-  
+
   // Exponential backoff config for reconnection
   const MAX_RECONNECT_DELAY = 30000 // 30 seconds max
   const BASE_RECONNECT_DELAY = 1000 // 1 second base
-  
+
   // Track mounted state without causing re-renders
   useEffect(() => {
     mountedRef.current = true
@@ -244,7 +228,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
   // Process incoming AG-UI events
   const processEvent = useCallback(
-    (event: AGUIEvent) => {
+    (event: PlatformEvent) => {
       onEvent?.(event)
 
       setState((prev) => {
@@ -255,31 +239,31 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           newState.runId = event.runId
           newState.status = 'connected'
           newState.error = null
-          
+
           // Track active run
           currentRunIdRef.current = event.runId
           setIsRunActive(true)
-          
+
           return newState
         }
 
         if (isRunFinishedEvent(event)) {
           newState.status = 'completed'
-          
+
           // Mark run as inactive
           if (currentRunIdRef.current === event.runId) {
             setIsRunActive(false)
             currentRunIdRef.current = null
           }
-          
+
           // Flush any pending message
           if (newState.currentMessage?.content) {
-            const msg: AGUIMessage = {
+            const msg = {
               id: newState.currentMessage.id || crypto.randomUUID(),
-              role: newState.currentMessage.role || AGUIRole.ASSISTANT,
+              role: 'assistant' as const,
               content: newState.currentMessage.content,
-              timestamp: event.timestamp,
-            }
+              timestamp: String(event.timestamp ?? ''),
+            } as PlatformMessage
             newState.messages = [...newState.messages, msg]
             onMessage?.(msg)
           }
@@ -289,15 +273,15 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
         if (isRunErrorEvent(event)) {
           newState.status = 'error'
-          newState.error = event.error
-          onError?.(event.error)
-          
+          // Core RunErrorEvent uses 'message' field, not 'error'
+          newState.error = event.message
+          onError?.(event.message)
+
           // Mark run as inactive on error
-          if (currentRunIdRef.current === event.runId) {
-            setIsRunActive(false)
-            currentRunIdRef.current = null
-          }
-          
+          // RunErrorEvent doesn't have runId in core; use ref
+          setIsRunActive(false)
+          currentRunIdRef.current = null
+
           return newState
         }
 
@@ -306,7 +290,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             id: event.messageId || null,
             role: event.role,
             content: '',
-            timestamp: event.timestamp,  // Capture timestamp from event
+            timestamp: String(event.timestamp ?? ''),
           }
           return newState
         }
@@ -325,16 +309,16 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         if (isTextMessageEndEvent(event)) {
           if (newState.currentMessage?.content) {
             const messageId = newState.currentMessage.id || crypto.randomUUID();
-            
+
             // Skip hidden messages (auto-sent initial/workflow prompts)
             if (hiddenMessageIdsRef.current.has(messageId)) {
               newState.currentMessage = null;
               return newState;
             }
-            
+
             // Check if this message already exists (e.g., from MESSAGES_SNAPSHOT)
             const existingIndex = newState.messages.findIndex(m => m.id === messageId);
-            
+
             if (existingIndex >= 0) {
               // Message exists - update content if different (don't duplicate)
               const existingMsg = newState.messages[existingIndex];
@@ -343,17 +327,17 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
                 updatedMessages[existingIndex] = {
                   ...existingMsg,
                   content: newState.currentMessage.content,
-                };
+                } as PlatformMessage;
                 newState.messages = updatedMessages;
               }
             } else {
               // Message doesn't exist - create new
-              const msg: AGUIMessage = {
+              const msg = {
                 id: messageId,
-                role: newState.currentMessage.role || AGUIRole.ASSISTANT,
+                role: newState.currentMessage.role || 'assistant',
                 content: newState.currentMessage.content,
-                timestamp: event.timestamp,
-              }
+                timestamp: String(event.timestamp ?? ''),
+              } as PlatformMessage
               newState.messages = [...newState.messages, msg]
               onMessage?.(msg)
             }
@@ -367,7 +351,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           // AG-UI spec: parentMessageId links tool call to the assistant message that invoked it
           // Runner may also send parent_tool_call_id (snake_case) for hierarchical nesting
           const parentToolId = (event as unknown as { parent_tool_call_id?: string }).parent_tool_call_id;
-          const parentMessageId = (event as unknown as { parentMessageId?: string }).parentMessageId;
+          const parentMessageId = event.parentMessageId;
 
           // Determine effective parent tool ID for hierarchy.
           // AG-UI sub-agents set parentMessageId to the PARENT TOOL CALL ID,
@@ -394,7 +378,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             args: '',
             parentToolUseId: effectiveParentToolId,
             parentMessageId: parentMessageId,
-            timestamp: event.timestamp,
+            timestamp: String(event.timestamp ?? ''),
           });
           newState.pendingToolCalls = updatedPending;
 
@@ -408,25 +392,26 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           return newState
         }
 
-        if (event.type === AGUIEventType.TOOL_CALL_ARGS) {
-          const toolCallId = event.toolCallId;
+        if (event.type === EventType.TOOL_CALL_ARGS) {
+          const typedEvent = event as { toolCallId: string; delta: string }
+          const toolCallId = typedEvent.toolCallId;
           const existing = newState.pendingToolCalls.get(toolCallId);
-          
+
           if (existing) {
             // Update the pending tool call in Map
             const updatedPending = new Map(newState.pendingToolCalls);
             updatedPending.set(toolCallId, {
               ...existing,
-              args: (existing.args || '') + event.delta,
+              args: (existing.args || '') + typedEvent.delta,
             });
             newState.pendingToolCalls = updatedPending;
           }
-          
+
           // Also update currentToolCall for backward compat (if it's the same tool)
           if (newState.currentToolCall?.id === toolCallId) {
             newState.currentToolCall = {
               ...newState.currentToolCall,
-              args: (newState.currentToolCall.args || '') + event.delta,
+              args: (newState.currentToolCall.args || '') + typedEvent.delta,
             }
           }
           return newState
@@ -458,12 +443,14 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             return newState;
           }
 
-          // Create completed tool call — per AG-UI spec, TOOL_CALL_END has no
-          // result field. Results arrive via a separate TOOL_CALL_RESULT event.
-          const completedToolCall = {
+          // Create completed tool call using @ag-ui/core ToolCall format
+          const completedToolCall: PlatformToolCall = {
             id: toolCallId,
-            name: toolCallName,
-            args: toolCallArgs,
+            type: 'function',
+            function: {
+              name: toolCallName,
+              arguments: toolCallArgs,
+            },
             result: undefined as string | undefined,
             status: 'completed' as const,
             parentToolUseId: parentToolUseId,
@@ -486,12 +473,11 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
               const pending = updatedPending.get(parentToolUseId) || []
               updatedPending.set(parentToolUseId, [...pending, {
                 id: crypto.randomUUID(),
-                role: AGUIRole.TOOL,
+                role: 'tool',
                 toolCallId: toolCallId,
-                name: toolCallName,
                 content: '',
                 toolCalls: [completedToolCall],
-              }])
+              } as PlatformMessage])
               newState.pendingChildren = updatedPending;
               if (newState.currentToolCall?.id === toolCallId) {
                 newState.currentToolCall = null;
@@ -533,7 +519,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           for (let i = messages.length - 1; i >= 0; i--) {
             const isTargetMessage = parentMessageId
               ? messages[i].id === parentMessageId
-              : messages[i].role === AGUIRole.ASSISTANT
+              : messages[i].role === 'assistant'
 
             if (isTargetMessage) {
               const existingToolCalls = messages[i].toolCalls || []
@@ -564,15 +550,14 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
           // If target message not found, add as standalone tool message
           if (!foundAssistant) {
-            const toolMessage: AGUIMessage = {
+            const toolMessage = {
               id: crypto.randomUUID(),
-              role: AGUIRole.TOOL,
+              role: 'tool' as const,
               content: '',
               toolCallId: toolCallId,
-              name: toolCallName,
               toolCalls: [completedToolCall],
-              timestamp: event.timestamp,
-            }
+              timestamp: String(event.timestamp ?? ''),
+            } as PlatformMessage
             messages.push(toolMessage)
           }
 
@@ -583,9 +568,10 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
         // Handle TOOL_CALL_RESULT — the runner sends results as a separate event
         // after TOOL_CALL_END (which may have no result field).
-        if (event.type === AGUIEventType.TOOL_CALL_RESULT) {
-          const toolCallId = event.toolCallId
-          const resultContent = event.content || ''
+        if (event.type === EventType.TOOL_CALL_RESULT) {
+          const typedEvent = event as { toolCallId: string; content: string }
+          const toolCallId = typedEvent.toolCallId
+          const resultContent = typedEvent.content || ''
           if (toolCallId) {
             let found = false
 
@@ -640,14 +626,15 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         }
 
         if (isStateSnapshotEvent(event)) {
-          newState.state = event.state
+          newState.state = event.snapshot as Record<string, unknown>
           return newState
         }
 
-        if (event.type === AGUIEventType.STATE_DELTA) {
+        if (event.type === EventType.STATE_DELTA) {
           // Apply state patches
+          const typedEvent = event as { delta: Array<{ op: string; path: string; value?: unknown }> }
           const stateClone = { ...newState.state }
-          for (const patch of event.delta) {
+          for (const patch of typedEvent.delta) {
             const key = patch.path.startsWith('/') ? patch.path.slice(1) : patch.path
             if (patch.op === 'add' || patch.op === 'replace') {
               stateClone[key] = patch.value
@@ -662,14 +649,14 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         if (isMessagesSnapshotEvent(event)) {
 
           // Filter out hidden messages from snapshot
-          const visibleMessages = event.messages.filter(msg => {
+          const visibleMessages = (event.messages as PlatformMessage[]).filter(msg => {
             const isHidden = hiddenMessageIdsRef.current.has(msg.id)
             return !isHidden
           })
 
-          // Normalize snapshot: convert OpenAI toolCalls format and reconstruct
-          // parent-child tool call hierarchy (sub-agents).  Without this, child
-          // tool results appear as flat separate messages instead of nested.
+          // Normalize snapshot: reconstruct parent-child tool call hierarchy
+          // (sub-agents). Without this, child tool results appear as flat
+          // separate messages instead of nested.
           const normalizedMessages = normalizeSnapshotMessages(visibleMessages)
 
           // Merge normalized snapshot into existing messages while preserving
@@ -681,7 +668,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           // Update existing messages in-place with snapshot data.
           // For assistant messages with toolCalls, merge tool call arrays to
           // preserve names/args from streaming events that the snapshot lacks.
-          const merged: AGUIMessage[] = newState.messages.map(msg => {
+          const merged: PlatformMessage[] = newState.messages.map(msg => {
             const snapshotVersion = snapshotMap.get(msg.id)
             if (!snapshotVersion) return msg
 
@@ -692,17 +679,23 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
                 const snapshotTC = mergedToolCalls.find(tc => tc.id === existingTC.id)
                 if (snapshotTC) {
                   // Prefer existing tool name if snapshot only has generic name
-                  if (existingTC.name && existingTC.name !== 'tool' &&
-                      (!snapshotTC.name || snapshotTC.name === 'tool')) {
-                    snapshotTC.name = existingTC.name
+                  if (existingTC.function.name && existingTC.function.name !== 'tool' &&
+                      (!snapshotTC.function.name || snapshotTC.function.name === 'tool')) {
+                    (snapshotTC as PlatformToolCall).function = {
+                      ...snapshotTC.function,
+                      name: existingTC.function.name,
+                    }
                   }
                   // Prefer existing args if snapshot has none
-                  if (existingTC.args && !snapshotTC.args) {
-                    snapshotTC.args = existingTC.args
+                  if (existingTC.function.arguments && !snapshotTC.function.arguments) {
+                    (snapshotTC as PlatformToolCall).function = {
+                      ...snapshotTC.function,
+                      arguments: existingTC.function.arguments,
+                    }
                   }
                   // Preserve parentToolUseId from either source
                   if (existingTC.parentToolUseId && !snapshotTC.parentToolUseId) {
-                    snapshotTC.parentToolUseId = existingTC.parentToolUseId
+                    (snapshotTC as PlatformToolCall).parentToolUseId = existingTC.parentToolUseId
                   }
                 } else {
                   // Existing tool call not in snapshot — keep it
@@ -746,6 +739,41 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             existingIds.add(msg.id)
           }
 
+          // Recover tool names from streaming state before cleanup.
+          // The snapshot's role=tool messages don't carry tool names, but
+          // the streaming events stored them in standalone messages' toolCalls
+          // arrays and in pendingToolCalls.  Extract them first so we can
+          // enrich the normalized toolCalls entries that default to 'tool'.
+          const toolNameMap = new Map<string, string>()
+          for (const msg of merged) {
+            if (msg.role === 'tool' && msg.toolCalls) {
+              for (const tc of msg.toolCalls) {
+                if (tc.id && tc.function.name && tc.function.name !== 'tool' && tc.function.name !== 'unknown_tool') {
+                  toolNameMap.set(tc.id, tc.function.name)
+                }
+              }
+            }
+          }
+          for (const [id, pending] of newState.pendingToolCalls) {
+            if (pending.name && pending.name !== 'tool' && pending.name !== 'unknown_tool') {
+              toolNameMap.set(id, pending.name)
+            }
+          }
+          // Apply recovered names to normalized toolCalls
+          for (const msg of merged) {
+            if (msg.role === 'assistant' && msg.toolCalls) {
+              for (const tc of msg.toolCalls) {
+                if ((!tc.function.name || tc.function.name === 'tool' || tc.function.name === 'unknown_tool') &&
+                    toolNameMap.has(tc.id)) {
+                  (tc as PlatformToolCall).function = {
+                    ...tc.function,
+                    name: toolNameMap.get(tc.id)!,
+                  }
+                }
+              }
+            }
+          }
+
           // Remove redundant standalone role=tool messages that are now nested
           // in an assistant message's toolCalls (from normalization).  Without
           // this cleanup, the standalone messages' toolCalls arrays (which lack
@@ -762,7 +790,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
           newState.messages = merged.filter(msg => {
             if (msg.role !== 'tool') return true
             // Remove if this message's toolCallId is already in an assistant's toolCalls
-            if (msg.toolCallId && nestedToolCallIds.has(msg.toolCallId)) return false
+            if ('toolCallId' in msg && msg.toolCallId && nestedToolCallIds.has(msg.toolCallId)) return false
             // Remove if any of its embedded toolCalls overlap with nested IDs
             if (msg.toolCalls?.some(tc => nestedToolCallIds.has(tc.id))) return false
             return true
@@ -775,46 +803,55 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         }
 
         if (isActivitySnapshotEvent(event)) {
-          newState.activities = event.activities
+          // Platform uses array-based activities; cast from wire format
+          const activities = (event as unknown as { activities?: PlatformActivity[] }).activities
+          if (activities) {
+            newState.activities = activities
+          }
           return newState
         }
 
-        if (event.type === AGUIEventType.ACTIVITY_DELTA) {
-          const activitiesClone = [...newState.activities]
-          for (const patch of event.delta) {
-            if (patch.op === 'add') {
-              activitiesClone.push(patch.activity)
-            } else if (patch.op === 'update') {
-              const idx = activitiesClone.findIndex((a) => a.id === patch.activity.id)
-              if (idx >= 0) {
-                activitiesClone[idx] = patch.activity
-              }
-            } else if (patch.op === 'remove') {
-              const idx = activitiesClone.findIndex((a) => a.id === patch.activity.id)
-              if (idx >= 0) {
-                activitiesClone.splice(idx, 1)
+        if (event.type === EventType.ACTIVITY_DELTA) {
+          // Platform uses array-based activity patches
+          const patches = (event as unknown as { delta: PlatformActivityPatch[] }).delta
+          if (patches) {
+            const activitiesClone = [...newState.activities]
+            for (const patch of patches) {
+              if (patch.op === 'add') {
+                activitiesClone.push(patch.activity)
+              } else if (patch.op === 'update') {
+                const idx = activitiesClone.findIndex((a) => a.id === patch.activity.id)
+                if (idx >= 0) {
+                  activitiesClone[idx] = patch.activity
+                }
+              } else if (patch.op === 'remove') {
+                const idx = activitiesClone.findIndex((a) => a.id === patch.activity.id)
+                if (idx >= 0) {
+                  activitiesClone.splice(idx, 1)
+                }
               }
             }
+            newState.activities = activitiesClone
           }
-          newState.activities = activitiesClone
           return newState
         }
 
         // Handle STEP events
-        if (event.type === AGUIEventType.STEP_STARTED) {
-          // Track current step in state
+        if (event.type === EventType.STEP_STARTED) {
+          // Core StepStartedEvent has stepName (no stepId)
+          const typedEvent = event as { stepName: string }
           newState.state = {
             ...newState.state,
             currentStep: {
-              id: (event as AGUIStepStartedEvent).stepId,
-              name: (event as AGUIStepStartedEvent).stepName,
+              id: typedEvent.stepName,
+              name: typedEvent.stepName,
               status: 'running',
             },
           }
           return newState
         }
 
-        if (event.type === AGUIEventType.STEP_FINISHED) {
+        if (event.type === EventType.STEP_FINISHED) {
           // Clear current step
           const stateClone = { ...newState.state }
           delete stateClone.currentStep
@@ -823,12 +860,12 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         }
 
         // Handle RAW events (may contain message data or thinking blocks)
-        if (event.type === AGUIEventType.RAW) {
+        if (event.type === EventType.RAW) {
           // RAW events use "event" field (AG-UI standard), or "data" field (legacy)
           type RawEventData = { event?: Record<string, unknown>; data?: Record<string, unknown> }
           const rawEvent = event as unknown as RawEventData
           const rawData = rawEvent.event || rawEvent.data
-          
+
           // Handle message metadata (for hiding auto-sent messages)
           if (rawData?.type === 'message_metadata' && rawData?.hidden) {
             const messageId = rawData.messageId as string
@@ -839,34 +876,34 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             }
             return newState
           }
-          
+
           // Handle Langfuse trace_id for feedback association
           if (rawData?.type === 'langfuse_trace' && rawData?.traceId) {
             const traceId = rawData.traceId as string
             onTraceId?.(traceId)
             return newState
           }
-          
+
           const actualRawData = rawData
-          
+
           // Handle thinking blocks from Claude SDK
           if (actualRawData?.type === 'thinking_block') {
-            const msg: AGUIMessage = {
+            const msg = {
               id: crypto.randomUUID(),
-              role: AGUIRole.ASSISTANT,
+              role: 'assistant' as const,
               content: actualRawData.thinking as string || '',
               metadata: {
                 type: 'thinking_block',
                 thinking: actualRawData.thinking as string,
                 signature: actualRawData.signature as string,
               },
-              timestamp: event.timestamp,
-            }
+              timestamp: String(event.timestamp ?? ''),
+            } as PlatformMessage
             newState.messages = [...newState.messages, msg]
             onMessage?.(msg)
             return newState
           }
-          
+
           // Handle user message echoes from backend
           if (actualRawData?.role === 'user' && actualRawData?.content) {
             // Check if this message already exists or is hidden (auto-sent prompts)
@@ -874,26 +911,26 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             const exists = newState.messages.some(m => m.id === messageId)
             const isHidden = hiddenMessageIdsRef.current.has(messageId)
             if (!exists && !isHidden) {
-              const msg: AGUIMessage = {
+              const msg = {
                 id: messageId,
-                role: AGUIRole.USER,
+                role: 'user' as const,
                 content: actualRawData.content as string,
-                timestamp: event.timestamp,
-              }
+                timestamp: String(event.timestamp ?? ''),
+              } as PlatformMessage
               newState.messages = [...newState.messages, msg]
               onMessage?.(msg)
             }
             return newState
           }
-          
+
           // Handle other message data
           if (actualRawData?.role && actualRawData?.content) {
-            const msg: AGUIMessage = {
+            const msg = {
               id: (actualRawData.id as string) || crypto.randomUUID(),
-              role: actualRawData.role as AGUIMessage['role'],
+              role: actualRawData.role as string,
               content: actualRawData.content as string,
-              timestamp: event.timestamp,
-            }
+              timestamp: String(event.timestamp ?? ''),
+            } as PlatformMessage
             newState.messages = [...newState.messages, msg]
             onMessage?.(msg)
           }
@@ -901,10 +938,11 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         }
 
         // Handle META events (user feedback: thumbs_up / thumbs_down)
-        if (event.type === AGUIEventType.META) {
-          const metaType = event.metaType
-          const messageId = event.payload?.messageId as string | undefined
-          
+        if (event.type === 'META') {
+          const metaEvent = event as AGUIMetaEvent
+          const metaType = metaEvent.metaType
+          const messageId = metaEvent.payload?.messageId as string | undefined
+
           if (messageId && (metaType === 'thumbs_up' || metaType === 'thumbs_down')) {
             const feedbackMap = new Map(newState.messageFeedback)
             feedbackMap.set(messageId, metaType)
@@ -955,7 +993,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
       eventSource.onmessage = (e) => {
         try {
-          const event = JSON.parse(e.data) as AGUIEvent
+          const event = JSON.parse(e.data) as PlatformEvent
           processEvent(event)
         } catch (err) {
           console.error('Failed to parse AG-UI event:', err)
@@ -966,18 +1004,18 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         // IMPORTANT: Close the EventSource immediately to prevent browser's native reconnect
         // from firing alongside our custom reconnect logic
         eventSource.close()
-        
+
         // Only proceed if this is still our active EventSource
         if (eventSourceRef.current !== eventSource) {
           return
         }
         eventSourceRef.current = null
-        
+
         // Don't reconnect if component is unmounted
         if (!mountedRef.current) {
           return
         }
-        
+
         setState((prev) => ({
           ...prev,
           status: 'error',
@@ -990,16 +1028,16 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current)
         }
-        
+
         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
         reconnectAttemptsRef.current++
         const delay = Math.min(
           BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1),
           MAX_RECONNECT_DELAY
         )
-        
+
         console.log(`[useAGUIStream] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`)
-        
+
         reconnectTimeoutRef.current = setTimeout(() => {
           if (mountedRef.current) {
             connect(runId)
@@ -1050,11 +1088,11 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         if (!response.ok) {
           throw new Error(`Failed to interrupt: ${response.statusText}`)
         }
-        
+
         // Mark run as inactive immediately (backend will send RUN_FINISHED or RUN_ERROR)
         setIsRunActive(false)
         currentRunIdRef.current = null
-        
+
       } catch (error) {
         console.error('[useAGUIStream] Interrupt failed:', error)
         throw error
@@ -1072,7 +1110,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
 
       const userMessage = {
         id: crypto.randomUUID(),
-        role: AGUIRole.USER,
+        role: 'user' as const,
         content,
       }
 
@@ -1087,7 +1125,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         messages: [...prev.messages, {
           ...userMessage,
           timestamp: new Date().toISOString(),
-        } as AGUIMessage],
+        } as PlatformMessage],
       }))
 
       try {
@@ -1118,13 +1156,13 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
         // AG-UI middleware pattern: POST creates run and returns metadata immediately
         // Events are broadcast to GET /agui/events subscribers (avoid concurrent streams)
         const result = await response.json()
-        
+
         // Mark run as active and track runId
         if (result.runId) {
           currentRunIdRef.current = result.runId
           setIsRunActive(true)
         }
-        
+
         // Ensure we're connected to the thread stream to receive events.
         // Check the EventSource ref directly instead of state.status to avoid
         // stale closure issues (state.status may still be 'completed' from the
@@ -1151,7 +1189,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
   useEffect(() => {
     if (typeof window === 'undefined') return // Skip during SSR
     if (autoConnectAttemptedRef.current) return // Only auto-connect once
-    
+
     if (autoConnect && mountedRef.current) {
       autoConnectAttemptedRef.current = true
       connect(initialRunId)
@@ -1170,4 +1208,3 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
     isRunActive,
   }
 }
-

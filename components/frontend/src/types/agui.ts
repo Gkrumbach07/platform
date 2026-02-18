@@ -15,11 +15,17 @@ export {
   EventType,
   type BaseEvent,
   type RunAgentInput,
+  type AGUIEvent,
+  type Message,
+  type Role,
+  type ToolCall,
+  type FunctionCall,
+  type Tool,
+  type Context,
+  type State,
   type RunStartedEvent,
   type RunFinishedEvent,
   type RunErrorEvent,
-  type StepStartedEvent,
-  type StepFinishedEvent,
   type TextMessageStartEvent,
   type TextMessageContentEvent,
   type TextMessageEndEvent,
@@ -30,32 +36,19 @@ export {
   type StateSnapshotEvent,
   type StateDeltaEvent,
   type MessagesSnapshotEvent,
-  type RawEvent,
-  type CustomEvent as AGUICustomEvent,
-  type ActivitySnapshotEvent,
-  type ActivityDeltaEvent,
-  type AGUIEvent,
-  type ToolCall,
-  type FunctionCall,
-  type Tool,
-  type Message,
-  type AssistantMessage,
-  type UserMessage,
-  type ToolMessage,
-  type DeveloperMessage,
-  type SystemMessage,
-  type ActivityMessage,
-  type ReasoningMessage,
-  type Role,
-  type Context,
-  type State,
+  type StepStartedEvent,
+  type StepFinishedEvent,
+  type ReasoningStartEvent,
+  type ReasoningMessageStartEvent,
+  type ReasoningMessageContentEvent,
+  type ReasoningMessageEndEvent,
+  type ReasoningEndEvent,
 } from '@ag-ui/client'
 
 import { EventType } from '@ag-ui/client'
 import type {
   ToolCall,
   Message,
-  AGUIEvent,
   RunStartedEvent,
   RunFinishedEvent,
   RunErrorEvent,
@@ -93,6 +86,15 @@ export type PlatformMessage = Message & {
   children?: PlatformMessage[]
 }
 
+// ── Wire event types for platform-specific fields ──
+// The backend sends extra fields not in the core schema. Since AG-UI schemas
+// use "passthrough", these survive JSON parsing but need explicit types.
+
+/** ToolCallStartEvent with backend's extra snake_case parent field */
+export type WireToolCallStartEvent = ToolCallStartEvent & {
+  parent_tool_call_id?: string
+}
+
 // ── Platform Activity types ──
 // The core ActivitySnapshotEvent/ActivityDeltaEvent are per-message, not
 // array-based. The platform uses an array-based model for UI rendering.
@@ -111,6 +113,20 @@ export type PlatformActivityPatch = {
   activity: PlatformActivity
 }
 
+/** Platform's array-based ACTIVITY_SNAPSHOT (differs from core's per-message model) */
+export type PlatformActivitySnapshotEvent = {
+  type: typeof EventType.ACTIVITY_SNAPSHOT
+  timestamp?: number
+  activities?: PlatformActivity[]
+}
+
+/** Platform's array-based ACTIVITY_DELTA (differs from core's per-message model) */
+export type PlatformActivityDeltaEvent = {
+  type: typeof EventType.ACTIVITY_DELTA
+  timestamp?: number
+  delta: PlatformActivityPatch[]
+}
+
 // ── Platform-specific types (no core equivalent) ──
 
 // Meta event (user feedback, annotations, etc.)
@@ -123,35 +139,7 @@ export type AGUIMetaEvent = {
 }
 
 // Union of all events the platform handles (core + META)
-export type PlatformEvent = AGUIEvent | AGUIMetaEvent
-
-// Run metadata for tracking session runs
-export type AGUIRunMetadata = {
-  threadId: string
-  runId: string
-  parentRunId?: string
-  sessionName: string
-  projectName: string
-  startedAt: string
-  finishedAt?: string
-  status: 'running' | 'completed' | 'error'
-  eventCount?: number
-  restartCount?: number
-}
-
-// History response from backend
-export type AGUIHistoryResponse = {
-  threadId: string
-  runId?: string
-  messages: PlatformMessage[]
-  runs: AGUIRunMetadata[]
-}
-
-// Runs list response
-export type AGUIRunsResponse = {
-  threadId: string
-  runs: AGUIRunMetadata[]
-}
+export type PlatformEvent = import('@ag-ui/client').AGUIEvent | AGUIMetaEvent
 
 // Pending tool call during streaming (flat format for accumulation)
 export type PendingToolCall = {
@@ -194,6 +182,12 @@ export type AGUIClientState = {
   error: string | null
   // Track feedback for messages (messageId -> feedback type)
   messageFeedback: Map<string, MessageFeedback>
+  // Buffer for reasoning content during streaming
+  currentReasoning: {
+    id: string | null
+    content: string
+    timestamp?: string
+  } | null
 }
 
 // ── Type Guards ──
@@ -239,6 +233,6 @@ export function isMessagesSnapshotEvent(event: { type: string }): event is Messa
   return event.type === EventType.MESSAGES_SNAPSHOT
 }
 
-export function isActivitySnapshotEvent(event: { type: string }): boolean {
+export function isActivitySnapshotEvent(event: { type: string }): event is PlatformActivitySnapshotEvent {
   return event.type === EventType.ACTIVITY_SNAPSHOT
 }

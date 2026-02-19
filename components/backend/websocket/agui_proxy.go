@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,30 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 )
+
+const (
+	// activityDebounceInterval is the minimum interval between CR status updates for lastActivityTime.
+	// Inactivity timeout is measured in hours, so minute-level granularity is sufficient.
+	activityDebounceInterval = 60 * time.Second
+
+	// activityUpdateTimeout bounds how long a single activity status update can take.
+	activityUpdateTimeout = 10 * time.Second
+)
+
+// activityUpdateSem limits concurrent goroutines spawned by updateLastActivityTime.
+// With 60s debounce, at most one goroutine per session is active at a time under normal
+// conditions; this cap protects against pathological bursts (e.g., many sessions starting
+// simultaneously with immediate=true).
+var activityUpdateSem = make(chan struct{}, 50)
+
+// lastActivityUpdateTimes tracks the last time we updated lastActivityTime on the CR
+// for each session to avoid excessive API calls. Key: "namespace/sessionName"
+var lastActivityUpdateTimes sync.Map
+
+// sessionProjectMap maps sessionName → projectName so that persistStreamedEvent
+// (which only receives sessionID) can look up the project for activity tracking.
+// Populated by HandleAGUIRunProxy on each run request.
+var sessionProjectMap sync.Map
 
 // HandleAGUIEvents serves the AG-UI event stream over SSE.  Clients
 // (typically EventSource) connect here to receive all events for a
@@ -179,6 +204,9 @@ func HandleAGUIRunProxy(c *gin.Context) {
 	}
 
 	log.Printf("AGUI Proxy: run=%s session=%s/%s msgs=%d", truncID(runID), projectName, sessionName, len(rawMessages))
+
+	// Store project→session mapping for activity tracking in persistStreamedEvent
+	sessionProjectMap.Store(sessionName, projectName)
 
 	// Parse messages for display name generation and hidden metadata
 	var minimalMsgs []types.Message
@@ -350,6 +378,16 @@ func persistStreamedEvent(sessionID, runID, threadID, jsonData string) {
 	}
 
 	persistEvent(sessionID, event)
+
+	// Update lastActivityTime on CR for activity events (debounced).
+	// Extract event type to check; projectName is derived from the
+	// sessionID-to-project mapping populated by HandleAGUIRunProxy.
+	eventType, _ := event["type"].(string)
+	if isActivityEvent(eventType) {
+		if projectName, ok := sessionProjectMap.Load(sessionID); ok {
+			updateLastActivityTime(projectName.(string), sessionID, eventType == types.EventTypeRunStarted)
+		}
+	}
 }
 
 // ─── POST /agui/interrupt ────────────────────────────────────────────
@@ -726,4 +764,77 @@ func triggerDisplayNameGenerationIfNeeded(projectName, sessionName string, messa
 
 	sessionCtx := handlers.ExtractSessionContext(spec)
 	handlers.GenerateDisplayNameAsync(projectName, sessionName, userMessage, sessionCtx)
+}
+
+// isActivityEvent returns true for AG-UI event types that indicate session activity.
+func isActivityEvent(eventType string) bool {
+	switch eventType {
+	case types.EventTypeRunStarted,
+		types.EventTypeTextMessageStart,
+		types.EventTypeTextMessageContent,
+		types.EventTypeToolCallStart:
+		return true
+	default:
+		return false
+	}
+}
+
+// updateLastActivityTime updates the lastActivityTime field on the AgenticSession CR status.
+// Updates are debounced to avoid excessive API calls. RUN_STARTED events bypass the debounce
+// to immediately mark the session as active.
+func updateLastActivityTime(projectName, sessionName string, immediate bool) {
+	if handlers.DynamicClient == nil {
+		log.Printf("Activity tracking: DynamicClient is nil, skipping update for %s/%s", projectName, sessionName)
+		return
+	}
+
+	key := projectName + "/" + sessionName
+	now := time.Now()
+
+	if !immediate {
+		if lastUpdate, ok := lastActivityUpdateTimes.Load(key); ok {
+			if now.Sub(lastUpdate.(time.Time)) < activityDebounceInterval {
+				return // Debounce: too soon since last update
+			}
+		}
+	}
+
+	lastActivityUpdateTimes.Store(key, now)
+
+	// Bound concurrency: drop the update if all slots are busy (debounce will retry later).
+	select {
+	case activityUpdateSem <- struct{}{}:
+	default:
+		return
+	}
+
+	// Run in goroutine to avoid blocking event processing
+	go func() {
+		defer func() { <-activityUpdateSem }()
+
+		gvr := handlers.GetAgenticSessionV1Alpha1Resource()
+		ctx, cancel := context.WithTimeout(context.Background(), activityUpdateTimeout)
+		defer cancel()
+
+		obj, err := handlers.DynamicClient.Resource(gvr).Namespace(projectName).Get(ctx, sessionName, metav1.GetOptions{})
+		if err != nil {
+			log.Printf("Activity tracking: failed to get session %s/%s: %v", projectName, sessionName, err)
+			return
+		}
+
+		status, _, _ := unstructured.NestedMap(obj.Object, "status")
+		if status == nil {
+			status = make(map[string]any)
+		}
+		status["lastActivityTime"] = now.UTC().Format(time.RFC3339)
+		if err := unstructured.SetNestedField(obj.Object, status, "status"); err != nil {
+			log.Printf("Activity tracking: failed to set status for %s/%s: %v", projectName, sessionName, err)
+			return
+		}
+
+		_, err = handlers.DynamicClient.Resource(gvr).Namespace(projectName).UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+		if err != nil {
+			log.Printf("Activity tracking: failed to update lastActivityTime for %s/%s: %v", projectName, sessionName, err)
+		}
+	}()
 }

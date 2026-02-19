@@ -1146,12 +1146,12 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: boolPtr(false),
 					ReadOnlyRootFilesystem:   boolPtr(false),
+					// Run as the same UID as the runner so state-sync can read runner-owned
+					// workspace files (700 permissions) without needing DAC_READ_SEARCH,
+					// which is blocked by OpenShift's restricted-v2 SCC.
+					RunAsUser: int64Ptr(1001),
 					Capabilities: &corev1.Capabilities{
 						Drop: []corev1.Capability{"ALL"},
-						// DAC_READ_SEARCH allows reading files/dirs regardless of permission bits.
-						// Needed because repos cloned at runtime by the runner (UID 1001) have 700
-						// permissions, and state-sync runs as root with all caps dropped.
-						Add: []corev1.Capability{"DAC_READ_SEARCH"},
 					},
 				},
 				Env: []corev1.EnvVar{

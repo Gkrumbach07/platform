@@ -176,6 +176,12 @@ export function useCreateSession(projectName: string) {
 - `src/services/queries/` - React Query hooks
 - `src/services/api/` - API client layer
 
+## Session Phase States
+
+`AgenticSessionPhase` is a TypeScript union type defined in `src/types/agentic-session.ts`. When writing polling logic or phase-based conditionals, **always use this type** rather than ad-hoc string literals. Use `Set<AgenticSessionPhase>` to group phases — TypeScript will flag compile errors if the union type gains new values that are not covered.
+
+See `.claude/patterns/react-query-usage.md` → "Session Phase States" for the full list and polling pattern.
+
 ## Recent Issues & Learnings
 
 - **2024-11-18:** Migrated all data fetching to React Query - no more manual fetch calls

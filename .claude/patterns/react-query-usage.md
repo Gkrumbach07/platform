@@ -250,6 +250,26 @@ export function useDeleteSession(projectName: string) {
 
 ```typescript
 // services/queries/sessions.ts
+import type { AgenticSessionPhase } from "@/types/agentic-session"
+
+// ✅ Define polling intervals as named constants — never hard-code inline
+const POLL_INTERVAL_AGGRESSIVE_MS = 1000;  // Transitional states
+const POLL_INTERVAL_NORMAL_MS = 5000;      // Active/running states
+
+// ✅ Derive stable/terminal phase sets from the TypeScript type.
+// When AgenticSessionPhase changes, TypeScript will flag missing cases here.
+const TERMINAL_PHASES = new Set<AgenticSessionPhase>([
+  'Stopped',
+  'Completed',
+  'Failed',
+]);
+
+const TRANSITIONAL_PHASES = new Set<AgenticSessionPhase>([
+  'Pending',
+  'Creating',
+  'Stopping',
+]);
+
 export function useSessionWithPolling(
   projectName: string,
   sessionName: string
@@ -257,26 +277,82 @@ export function useSessionWithPolling(
   return useQuery({
     queryKey: ["sessions", projectName, sessionName],
     queryFn: () => sessionApi.get(projectName, sessionName),
+    // ✅ Pause polling when browser tab is hidden (Page Visibility API)
+    refetchIntervalInBackground: false,
     refetchInterval: (query) => {
-      const session = query.state.data
+      const session = query.state.data as AgenticSession | undefined
 
-      // Stop polling if completed or error
-      if (session?.status.phase === "Completed" ||
-          session?.status.phase === "Error") {
-        return false  // Stop polling
+      // Stop polling for terminal phases
+      if (!session?.status?.phase || TERMINAL_PHASES.has(session.status.phase)) {
+        return false
       }
 
-      return 3000  // Poll every 3s while running
+      // Poll aggressively during transitions
+      if (TRANSITIONAL_PHASES.has(session.status.phase)) {
+        return POLL_INTERVAL_AGGRESSIVE_MS
+      }
+
+      // Normal polling while running
+      return POLL_INTERVAL_NORMAL_MS
     },
+    // ✅ React Query retries failed requests 3 times with exponential backoff by default.
+    // Override only if polling should stop sooner on persistent failures:
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   })
 }
 ```
 
 **Key points:**
 
-- Dynamic `refetchInterval` based on query data
-- Return `false` to stop polling
-- Return number (ms) to continue polling
+- Extract polling intervals as named constants — never hard-code `2000` or `5000` inline
+- `refetchIntervalInBackground: false` pauses polling when the browser tab is hidden, saving resources; set to `true` only when background updates are critical
+- Derive phase groupings (`TERMINAL_PHASES`, `TRANSITIONAL_PHASES`) as typed `Set<AgenticSessionPhase>` so TypeScript catches any new phases added to the union type
+- Return `false` to stop polling; return a number (ms) to continue
+- React Query automatically stops `refetchInterval` when the query enters an error state after retries are exhausted — rely on this rather than adding custom error counters
+- If the API is slower than the polling interval, React Query queues requests and skips intermediate polls; the interval timer restarts after each successful response, so overlapping requests are not a concern
+
+## Polling: Known Limitations and Considerations
+
+When implementing polling in any React Query hook, address the following explicitly or document why they are not applicable:
+
+| Concern | React Query built-in | What to verify |
+|---|---|---|
+| Tab backgrounding | `refetchIntervalInBackground: false` stops polling when hidden | Set this option unless background updates are required |
+| Request overlap (API slower than interval) | React Query waits for previous request before restarting the timer | No extra handling needed, but note this in comments |
+| Repeated failures | `retry` + `retryDelay` with exponential backoff; polling stops after retries exhausted | Confirm `retry` count is appropriate for the use case |
+| Exhaustive phase list | TypeScript union type `AgenticSessionPhase` in `src/types/agentic-session.ts` | Use `Set<AgenticSessionPhase>` to get compile-time exhaustiveness checking |
+| Pagination during polling | `keepPreviousData` / `placeholderData` prevents layout shifts | Use `placeholderData: keepPreviousData` on paginated queries that also poll |
+
+## Session Phase States
+
+`AgenticSessionPhase` is defined in `src/types/agentic-session.ts` as a union type. **Always import and use this type** — never write phase strings ad-hoc:
+
+```typescript
+import type { AgenticSessionPhase } from "@/types/agentic-session"
+
+// ✅ Typed constant — exhaustiveness is enforced by TypeScript
+const NON_STABLE_PHASES = new Set<AgenticSessionPhase>([
+  'Pending', 'Creating', 'Running', 'Stopping',
+])
+
+// ❌ Ad-hoc string — no compile-time safety, easy to typo or miss new states
+if (phase === 'Pending' || phase === 'Creating' || phase === 'Running') { ... }
+```
+
+Current phases and their categories:
+
+| Phase | Category | Notes |
+|---|---|---|
+| `Pending` | Transitional | Session submitted, not yet started |
+| `Creating` | Transitional | Runner pod being created |
+| `Running` | Active | Session is executing |
+| `Stopping` | Transitional | Stop requested, draining |
+| `Stopped` | Terminal | Stopped by user or inactivity |
+| `Completed` | Terminal | Finished successfully |
+| `Failed` | Terminal | Error or timeout |
+
+If new phases are added to `AgenticSessionPhase`, TypeScript will surface errors at any `Set<AgenticSessionPhase>` site — use this to ensure polling logic stays in sync.
 
 ## API Client Layer Pattern
 

@@ -249,24 +249,62 @@ export function useDeleteSession(projectName: string) {
 ## Pattern 5: Polling Until Condition Met
 
 ```typescript
-// services/queries/sessions.ts
+// services/queries/use-sessions.ts
+import type { AgenticSession, AgenticSessionPhase } from "@/types/api/sessions"
+
+// IMPORTANT: Always define phase lists using AgenticSessionPhase to prevent
+// typos and to stay in sync with the canonical type definition.
+// Cross-check against AgenticSessionPhase in types/api/sessions.ts to confirm
+// completeness whenever you add or change a phase list.
+const TERMINAL_PHASES: AgenticSessionPhase[] = ["Stopped", "Completed", "Failed"]
+
+// Define intervals as named constants - do not scatter magic numbers across hooks
+const POLL_INTERVALS_MS = {
+  TRANSITIONING: 1000,  // Pending, Creating, Stopping
+  RUNNING: 5000,        // Running
+  AGGRESSIVE: 500,      // Desired-phase annotation pending
+} as const
+
 export function useSessionWithPolling(
   projectName: string,
   sessionName: string
 ) {
   return useQuery({
-    queryKey: ["sessions", projectName, sessionName],
-    queryFn: () => sessionApi.get(projectName, sessionName),
+    queryKey: sessionKeys.detail(projectName, sessionName),
+    queryFn: () => sessionsApi.getSession(projectName, sessionName),
+    // Add retry with exponential backoff alongside polling
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
     refetchInterval: (query) => {
-      const session = query.state.data
-
-      // Stop polling if completed or error
-      if (session?.status.phase === "Completed" ||
-          session?.status.phase === "Error") {
-        return false  // Stop polling
+      // Pause polling when tab is not visible (avoid wasting resources)
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return false
       }
 
-      return 3000  // Poll every 3s while running
+      // Stop polling after retries are exhausted (error state)
+      if (query.state.status === "error") {
+        return false
+      }
+
+      const session = query.state.data as AgenticSession | undefined
+      const phase = session?.status?.phase
+
+      // Stop polling for terminal phases
+      if (phase && TERMINAL_PHASES.includes(phase)) {
+        return false
+      }
+
+      // Use typed phase comparisons, not hardcoded strings
+      const isTransitioning: AgenticSessionPhase[] = ["Pending", "Creating", "Stopping"]
+      if (phase && isTransitioning.includes(phase)) {
+        return POLL_INTERVALS_MS.TRANSITIONING
+      }
+
+      if (phase === "Running") {
+        return POLL_INTERVALS_MS.RUNNING
+      }
+
+      return POLL_INTERVALS_MS.TRANSITIONING  // Default for unknown/undefined phase
     },
   })
 }
@@ -274,9 +312,13 @@ export function useSessionWithPolling(
 
 **Key points:**
 
-- Dynamic `refetchInterval` based on query data
-- Return `false` to stop polling
-- Return number (ms) to continue polling
+- Import and use `AgenticSessionPhase` from `@/types/api/sessions` — never hard-code phase strings
+- Verify phase lists against the canonical type; TypeScript will catch missing/misspelled values
+- Return `false` to stop polling; return number (ms) to continue
+- Add `retry` + `retryDelay` (exponential backoff) alongside `refetchInterval`
+- Stop polling on error state after retries exhausted
+- Check `document.visibilityState` to avoid polling hidden tabs
+- Define interval constants in one place rather than scattering magic numbers
 
 ## API Client Layer Pattern
 
@@ -353,6 +395,86 @@ export const sessionApi = {
 - Type-safe inputs and outputs
 - Centralized error handling
 
+## Polling Best Practices
+
+These requirements apply any time you add `refetchInterval` to a query hook.
+
+### 1. Use `AgenticSessionPhase` for Phase Comparisons
+
+The canonical session phase type is `AgenticSessionPhase` in `components/frontend/src/types/api/sessions.ts`:
+
+```typescript
+type AgenticSessionPhase =
+  | 'Pending' | 'Creating' | 'Running'
+  | 'Stopping' | 'Stopped' | 'Completed' | 'Failed'
+```
+
+**Always import this type** when checking phases. TypeScript will flag misspelled or outdated values:
+
+```typescript
+// ❌ BAD - hard-coded strings, prone to drift and typos
+const nonStable = ['Pending', 'Creating', 'Stoping']  // typo!
+
+// ✅ GOOD - type-checked, exhaustiveness verifiable
+import type { AgenticSessionPhase } from "@/types/api/sessions"
+const TRANSITIONING: AgenticSessionPhase[] = ["Pending", "Creating", "Stopping"]
+```
+
+When building a phase list (e.g., "non-stable states"), cross-check against `AgenticSessionPhase` to confirm no phases are missing before shipping.
+
+### 2. Pause Polling for Hidden Tabs (Page Visibility API)
+
+React Query does **not** automatically pause `refetchInterval` polling when a browser tab is hidden. Always check `document.visibilityState` to avoid wasting API quota and browser resources:
+
+```typescript
+refetchInterval: (query) => {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    return false  // Pause — tab is hidden
+  }
+  // ... rest of logic
+}
+```
+
+The `typeof document !== "undefined"` guard is required for SSR compatibility.
+
+### 3. Slow API Responses
+
+React Query will **not** fire overlapping requests for the same query key. If the API response takes longer than the polling interval, the next poll is deferred until the current one completes. No additional handling is needed for this case.
+
+### 4. Error Handling for Polling Queries
+
+Always pair `refetchInterval` with `retry` and `retryDelay`. After retries are exhausted, stop polling rather than continuing to hammer a failing endpoint:
+
+```typescript
+useQuery({
+  queryKey: [...],
+  queryFn: ...,
+  retry: 3,
+  retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+  refetchInterval: (query) => {
+    if (query.state.status === "error") return false  // Retries exhausted - stop
+    // ... phase-based logic
+  },
+})
+```
+
+React Query's retry config applies per-query; it is independent of the polling interval.
+
+### 5. Define Interval Values as Named Constants
+
+Do not scatter magic numbers across hook files. Define all polling intervals as named constants at the top of the hook file (or in a shared config):
+
+```typescript
+// At top of services/queries/use-sessions.ts
+const POLL_INTERVALS_MS = {
+  TRANSITIONING: 1000,  // Pending, Creating, Stopping
+  RUNNING: 5000,        // Running
+  AGGRESSIVE: 500,      // Desired-phase annotation present
+} as const
+```
+
+This keeps intent clear and makes tuning easy from one place.
+
 ## Anti-Patterns (DO NOT USE)
 
 ### ❌ Manual fetch() in Components
@@ -407,3 +529,12 @@ Before merging frontend code:
 - [ ] Loading and error states handled
 - [ ] Optimistic updates for create/delete (where appropriate)
 - [ ] API client layer is pure functions (no hooks)
+
+**When adding polling (`refetchInterval`):**
+
+- [ ] Phase comparisons use `AgenticSessionPhase` type — no raw string literals
+- [ ] Phase lists verified as exhaustive against `AgenticSessionPhase` in `types/api/sessions.ts`
+- [ ] `document.visibilityState` check added to pause polling on hidden tabs
+- [ ] `retry` + `retryDelay` (exponential backoff) configured alongside `refetchInterval`
+- [ ] Polling stops when `query.state.status === "error"` (retries exhausted)
+- [ ] Polling intervals defined as named constants, not inline magic numbers

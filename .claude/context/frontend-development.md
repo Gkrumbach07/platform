@@ -175,6 +175,30 @@ export function useCreateSession(projectName: string) {
 - `src/components/ui/` - Shadcn UI components
 - `src/services/queries/` - React Query hooks
 - `src/services/api/` - API client layer
+- `src/types/api/sessions.ts` - Canonical session types including `AgenticSessionPhase`
+
+## Session Phase Types
+
+The canonical session phase type is defined in `components/frontend/src/types/api/sessions.ts`:
+
+```typescript
+export type AgenticSessionPhase =
+  | 'Pending' | 'Creating' | 'Running'
+  | 'Stopping' | 'Stopped' | 'Completed' | 'Failed'
+```
+
+**Always import `AgenticSessionPhase`** when writing phase comparisons or building lists of phases (e.g., "terminal states", "transitional states"). Do not use raw string literals — TypeScript will catch typos and drift from the canonical definition.
+
+```typescript
+// ❌ BAD
+if (phase === 'Stoped') ...  // typo, no compile error
+
+// ✅ GOOD
+import type { AgenticSessionPhase } from "@/types/api/sessions"
+const TERMINAL: AgenticSessionPhase[] = ['Stopped', 'Completed', 'Failed']
+```
+
+When implementing polling logic, also load `.claude/patterns/react-query-usage.md` for the full set of polling requirements (visibility handling, error handling, interval constants).
 
 ## Recent Issues & Learnings
 

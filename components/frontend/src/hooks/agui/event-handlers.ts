@@ -278,6 +278,36 @@ function handleRunError(
 ): AGUIClientState {
   state.status = 'error'
   state.error = event.message
+
+  // Mark any committed tool calls as errored so their spinners stop
+  state.messages = state.messages.map(msg => {
+    if (!msg.toolCalls) return msg
+    const hasIncomplete = msg.toolCalls.some(tc => tc.status !== 'completed')
+    if (!hasIncomplete) return msg
+    const updatedToolCalls = msg.toolCalls.map(tc =>
+      tc.status === 'completed' ? tc : { ...tc, status: 'error' as const, error: event.message }
+    )
+    return { ...msg, toolCalls: updatedToolCalls }
+  })
+
+  // Drain in-progress tool calls that haven't been committed to messages yet
+  // (received TOOL_CALL_START but not TOOL_CALL_END)
+  if (state.pendingToolCalls.size > 0) {
+    state.pendingToolCalls = new Map()
+  }
+  state.currentToolCall = null
+
+  // Surface the error as a chat message so the user sees it inline
+  const errorMsg = {
+    id: crypto.randomUUID(),
+    role: 'assistant' as const,
+    content: `**Error:** ${event.message}`,
+    timestamp: new Date().toISOString(),
+    metadata: { type: 'run_error' },
+  } as PlatformMessage
+  state.messages = [...state.messages, errorMsg]
+  callbacks.onMessage?.(errorMsg)
+
   callbacks.onError?.(event.message)
   callbacks.setIsRunActive(false)
   callbacks.currentRunIdRef.current = null

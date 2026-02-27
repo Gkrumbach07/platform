@@ -6,6 +6,7 @@ Breaks down stream processing into focused handler functions.
 
 import json
 import logging
+import time
 import uuid
 from typing import AsyncIterator, Any, Dict, Optional
 
@@ -111,6 +112,7 @@ async def handle_tool_use_block(
             tool_call_id=tool_id,
             tool_call_name=tool_display_name,  # Use unprefixed name
             parent_message_id=parent_tool_use_id,
+            timestamp=int(time.time() * 1000),
         )
         
         if tool_input:
@@ -188,6 +190,7 @@ async def handle_tool_result_block(
             thread_id=thread_id,
             run_id=run_id,
             tool_call_id=tool_use_id,
+            timestamp=int(time.time() * 1000),
         )
         
         # Emit ToolCallResult with the actual result content
@@ -200,6 +203,7 @@ async def handle_tool_result_block(
             tool_call_id=tool_use_id,
             content=result_str,
             role="tool",
+            timestamp=int(time.time() * 1000),
         )
 
 

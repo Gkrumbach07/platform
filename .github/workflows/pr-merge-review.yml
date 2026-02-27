@@ -3,7 +3,7 @@ name: PR Merge Review
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 13 * * 1-5'  # weekdays 1pm UTC
+    - cron: '0 10 * * 1-5'  # weekdays 5am ET (10:00 UTC)
 
 permissions:
   contents: read

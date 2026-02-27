@@ -180,11 +180,10 @@ func GetGoogleCredentialsForSession(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"accessToken":  creds.AccessToken,
-		"refreshToken": creds.RefreshToken,
-		"email":        creds.Email,
-		"scopes":       creds.Scopes,
-		"expiresAt":    creds.ExpiresAt.Format(time.RFC3339),
+		"accessToken": creds.AccessToken,
+		"email":       creds.Email,
+		"scopes":      creds.Scopes,
+		"expiresAt":   creds.ExpiresAt.Format(time.RFC3339),
 	})
 }
 

@@ -185,15 +185,14 @@ async def populate_runtime_credentials(context: RunnerContext) -> None:
             client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
             client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 
-            # The refresh token is written to disk because workspace-mcp
-            # runs as a child process and cannot call back to the platform
-            # backend to obtain fresh access tokens on its own.  Without it,
-            # Google API access silently breaks after the ~1h access-token
-            # lifetime.  The file is owner-only (0o600) and lives inside a
-            # short-lived Job pod with no shared volume mounts.
+            # Refresh token is intentionally omitted — it is long-lived
+            # and should not be stored on the pod filesystem.  The runner
+            # re-fetches a fresh access token from the backend every 60s
+            # (and on-demand via the refresh_credentials MCP tool), so
+            # workspace-mcp never needs to self-refresh.
             creds_data = {
                 "token": google_creds.get("accessToken"),
-                "refresh_token": google_creds.get("refreshToken", ""),
+                "refresh_token": "",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "client_id": client_id,
                 "client_secret": client_secret,

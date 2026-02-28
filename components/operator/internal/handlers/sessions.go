@@ -824,6 +824,10 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 						}},
 					})
 
+					// Append user-provided environmentVariables (e.g. RUNNER_TYPE, RUNNER_STATE_DIR)
+					// without overriding reserved vars like SESSION_NAME, S3_ENDPOINT, etc.
+					base = appendNonConflictingEnvVars(base, parseEnvironmentVariables(spec))
+
 					return base
 				}(),
 				VolumeMounts: []corev1.VolumeMount{
@@ -1067,24 +1071,21 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 								base = append(base, corev1.EnvVar{Name: "ACTIVE_WORKFLOW_PATH", Value: path})
 							}
 						}
-						if envMap, ok := spec["environmentVariables"].(map[string]interface{}); ok {
-							for k, v := range envMap {
-								if vs, ok := v.(string); ok {
-									// replace if exists
-									replaced := false
-									for i := range base {
-										if base[i].Name == k {
-											base[i].Value = vs
-											replaced = true
-											break
-										}
-									}
-									if !replaced {
-										base = append(base, corev1.EnvVar{Name: k, Value: vs})
-									}
-								}
+						// Apply user-provided environmentVariables with replace-if-exists
+					// semantics (overrides are intentional for the runner container)
+					for _, ev := range parseEnvironmentVariables(spec) {
+						replaced := false
+						for i := range base {
+							if base[i].Name == ev.Name {
+								base[i].Value = ev.Value
+								replaced = true
+								break
 							}
 						}
+						if !replaced {
+							base = append(base, ev)
+						}
+					}
 					}
 
 					return base
@@ -1148,16 +1149,22 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 						Drop: []corev1.Capability{"ALL"},
 					},
 				},
-				Env: []corev1.EnvVar{
-					{Name: "SESSION_NAME", Value: name},
-					{Name: "NAMESPACE", Value: sessionNamespace},
-					{Name: "S3_ENDPOINT", Value: s3Endpoint},
-					{Name: "S3_BUCKET", Value: s3Bucket},
-					{Name: "SYNC_INTERVAL", Value: "60"},
-					{Name: "MAX_SYNC_SIZE", Value: "1073741824"}, // 1GB
-					{Name: "AWS_ACCESS_KEY_ID", Value: s3AccessKey},
-					{Name: "AWS_SECRET_ACCESS_KEY", Value: s3SecretKey},
-				},
+				Env: func() []corev1.EnvVar {
+					base := []corev1.EnvVar{
+						{Name: "SESSION_NAME", Value: name},
+						{Name: "NAMESPACE", Value: sessionNamespace},
+						{Name: "S3_ENDPOINT", Value: s3Endpoint},
+						{Name: "S3_BUCKET", Value: s3Bucket},
+						{Name: "SYNC_INTERVAL", Value: "60"},
+						{Name: "MAX_SYNC_SIZE", Value: "1073741824"}, // 1GB
+						{Name: "AWS_ACCESS_KEY_ID", Value: s3AccessKey},
+						{Name: "AWS_SECRET_ACCESS_KEY", Value: s3SecretKey},
+					}
+					// Append user-provided environmentVariables (e.g. RUNNER_TYPE, RUNNER_STATE_DIR)
+					// without overriding reserved vars like SESSION_NAME, S3_ENDPOINT, etc.
+					base = appendNonConflictingEnvVars(base, parseEnvironmentVariables(spec))
+					return base
+				}(),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/workspace", ReadOnly: false},
 					// SubPath mount for .claude so sync sidecar reads from same location as runner
@@ -1339,6 +1346,40 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	}
 
 	return nil
+}
+
+// parseEnvironmentVariables reads the environmentVariables map from a CRD spec
+// and returns a slice of EnvVar. Returns nil if not present or empty.
+func parseEnvironmentVariables(spec map[string]interface{}) []corev1.EnvVar {
+	envMap, ok := spec["environmentVariables"].(map[string]interface{})
+	if !ok || len(envMap) == 0 {
+		return nil
+	}
+	var envVars []corev1.EnvVar
+	for k, v := range envMap {
+		if vs, ok := v.(string); ok {
+			envVars = append(envVars, corev1.EnvVar{Name: k, Value: vs})
+		}
+	}
+	return envVars
+}
+
+// appendNonConflictingEnvVars appends env vars from extra to base, skipping any
+// whose Name already exists in base. This protects reserved variables.
+func appendNonConflictingEnvVars(base []corev1.EnvVar, extra []corev1.EnvVar) []corev1.EnvVar {
+	for _, ev := range extra {
+		exists := false
+		for _, b := range base {
+			if b.Name == ev.Name {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			base = append(base, ev)
+		}
+	}
+	return base
 }
 
 // reconcileSpecReposWithPatch is a version of reconcileSpecRepos that uses StatusPatch for batched updates.

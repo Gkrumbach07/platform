@@ -97,7 +97,7 @@ jobs:
               ;;
             claude-runner)
               echo "context=./components/runners" >> $GITHUB_OUTPUT
-              echo "dockerfile=./components/runners/claude-code-runner/Dockerfile" >> $GITHUB_OUTPUT
+              echo "dockerfile=./components/runners/ambient-runner/Dockerfile" >> $GITHUB_OUTPUT
               echo "image=quay.io/ambient_code/vteam_claude_runner" >> $GITHUB_OUTPUT
               ;;
             state-sync)

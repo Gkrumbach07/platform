@@ -3,12 +3,12 @@ name: Claude Code Runner Tests
 on:
   pull_request:
     paths:
-      - 'components/runners/claude-code-runner/**'
+      - 'components/runners/ambient-runner/**'
       - '.github/workflows/runner-tests.yml'
   push:
     branches: [main]
     paths:
-      - 'components/runners/claude-code-runner/**'
+      - 'components/runners/ambient-runner/**'
       - '.github/workflows/runner-tests.yml'
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: components/runners/claude-code-runner
+        working-directory: components/runners/ambient-runner
 
     steps:
       - name: Checkout code
@@ -47,7 +47,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: ./components/runners/claude-code-runner/coverage.xml
+          files: ./components/runners/ambient-runner/coverage.xml
           flags: runner
-          name: claude-code-runner
+          name: ambient-runner
           fail_ci_if_error: false

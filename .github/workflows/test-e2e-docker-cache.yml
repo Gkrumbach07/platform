@@ -194,11 +194,11 @@ jobs:
 
           # Build claude-runner with cache
           if [ "$BUILD_RUNNER" = "true" ]; then
-            echo "Building claude-code-runner (changed or forced)..."
+            echo "Building ambient-runner (changed or forced)..."
             docker buildx build \
               --load \
               -t quay.io/ambient_code/vteam_claude_runner:e2e-test \
-              -f components/runners/claude-code-runner/Dockerfile \
+              -f components/runners/ambient-runner/Dockerfile \
               --cache-from type=gha,scope=e2e-claude-runner \
               --cache-to type=gha,mode=max,scope=e2e-claude-runner \
               components/runners
@@ -253,9 +253,9 @@ jobs:
           fi
 
           if [ "$BUILD_RUNNER" = "true" ]; then
-            echo "Building claude-runner..."
+            echo "Building ambient-runner..."
             docker build -t quay.io/ambient_code/vteam_claude_runner:e2e-test \
-              -f components/runners/claude-code-runner/Dockerfile components/runners
+              -f components/runners/ambient-runner/Dockerfile components/runners
           else
             docker pull quay.io/ambient_code/vteam_claude_runner:latest
             docker tag quay.io/ambient_code/vteam_claude_runner:latest quay.io/ambient_code/vteam_claude_runner:e2e-test

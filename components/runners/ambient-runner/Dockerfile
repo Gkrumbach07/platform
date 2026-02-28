@@ -65,17 +65,16 @@ RUN pip install --no-cache-dir uv pre-commit
 # Create working directory
 WORKDIR /app
 
-# Copy claude-runner package (no separate runner-shell needed)
-COPY claude-code-runner /app/claude-runner
-
+# Copy ambient-runner package
+COPY ambient-runner /app/ambient-runner
 
 # Install runner as a package (pulls dependencies including AG-UI SDK)
-RUN pip install --no-cache-dir '/app/claude-runner[all]'
+RUN pip install --no-cache-dir '/app/ambient-runner[all]'
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV RUNNER_TYPE=claude
+ENV RUNNER_TYPE=claude-agent-sdk
 ENV HOME=/app
 ENV SHELL=/bin/bash
 ENV TERM=xterm-256color
@@ -100,4 +99,4 @@ EXPOSE 8001
 
 # Start FastAPI AG-UI server using uvicorn
 # The main module is installed as part of the package
-CMD ["/bin/bash", "-c", "umask 0022 && cd /app/claude-runner && uvicorn main:app --host 0.0.0.0 --port 8001"]
+CMD ["/bin/bash", "-c", "umask 0022 && cd /app/ambient-runner && uvicorn main:app --host 0.0.0.0 --port 8001"]

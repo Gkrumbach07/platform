@@ -3853,4 +3853,4 @@ func GitListBranchesSession(c *gin.Context) {
 
 // NOTE: autoTriggerInitialPrompt removed - runner handles INITIAL_PROMPT auto-execution
 // Runner POSTs to backend's /agui/run when ready, events flow through middleware
-// See: components/runners/claude-code-runner/main.py auto_execute_initial_prompt()
+// See: components/runners/ambient-runner/main.py auto_execute_initial_prompt()

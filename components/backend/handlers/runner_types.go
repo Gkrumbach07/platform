@@ -1,0 +1,109 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const agentRegistryConfigMapName = "ambient-agent-registry"
+const agentRegistryDataKey = "agent-registry.json"
+
+// AgentRegistryEntry represents a runner type entry from the agent registry ConfigMap.
+type AgentRegistryEntry struct {
+	ID              string            `json:"id"`
+	DisplayName     string            `json:"displayName"`
+	Description     string            `json:"description"`
+	DefaultModel    string            `json:"defaultModel"`
+	Models          []ModelOption     `json:"models"`
+	RequiredSecrets []string          `json:"requiredSecrets"`
+	InternalEnvVars map[string]string `json:"internalEnvVars,omitempty"`
+}
+
+// ModelOption represents a model choice within a runner type.
+type ModelOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// RunnerTypeResponse is the public API shape (excludes internalEnvVars).
+type RunnerTypeResponse struct {
+	ID              string        `json:"id"`
+	DisplayName     string        `json:"displayName"`
+	Description     string        `json:"description"`
+	DefaultModel    string        `json:"defaultModel"`
+	Models          []ModelOption `json:"models"`
+	RequiredSecrets []string      `json:"requiredSecrets"`
+}
+
+// loadAgentRegistry reads and parses the agent registry ConfigMap using the backend service account.
+func loadAgentRegistry() ([]AgentRegistryEntry, error) {
+	if K8sClientMw == nil {
+		return nil, fmt.Errorf("backend K8s client not initialized")
+	}
+
+	cm, err := K8sClientMw.CoreV1().ConfigMaps(Namespace).Get(
+		context.Background(), agentRegistryConfigMapName, v1.GetOptions{},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ConfigMap %s: %w", agentRegistryConfigMapName, err)
+	}
+
+	rawJSON, ok := cm.Data[agentRegistryDataKey]
+	if !ok {
+		return nil, fmt.Errorf("ConfigMap %s missing key %q", agentRegistryConfigMapName, agentRegistryDataKey)
+	}
+
+	var entries []AgentRegistryEntry
+	if err := json.Unmarshal([]byte(rawJSON), &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse agent registry JSON: %w", err)
+	}
+
+	return entries, nil
+}
+
+// getRunnerTypeConfig returns the full registry entry (including internalEnvVars) for the given runner type ID.
+// Returns nil if not found.
+func getRunnerTypeConfig(runnerTypeID string) (*AgentRegistryEntry, error) {
+	entries, err := loadAgentRegistry()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range entries {
+		if entries[i].ID == runnerTypeID {
+			return &entries[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// GetRunnerTypes handles GET /api/runner-types and returns the list of available runner types
+// with internalEnvVars excluded.
+func GetRunnerTypes(c *gin.Context) {
+	entries, err := loadAgentRegistry()
+	if err != nil {
+		log.Printf("Failed to load agent registry: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load runner types"})
+		return
+	}
+
+	resp := make([]RunnerTypeResponse, 0, len(entries))
+	for _, e := range entries {
+		resp = append(resp, RunnerTypeResponse{
+			ID:              e.ID,
+			DisplayName:     e.DisplayName,
+			Description:     e.Description,
+			DefaultModel:    e.DefaultModel,
+			Models:          e.Models,
+			RequiredSecrets: e.RequiredSecrets,
+		})
+	}
+
+	c.JSON(http.StatusOK, resp)
+}

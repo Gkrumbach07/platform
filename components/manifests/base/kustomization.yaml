@@ -20,6 +20,7 @@ resources:
 - ambient-api-server-db.yml
 - ambient-api-server-service.yml
 - unleash-deployment.yaml
+- agent-registry-configmap.yaml
 
 # Default images (can be overridden by overlays)
 images:

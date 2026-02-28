@@ -535,6 +535,21 @@ func CreateSession(c *gin.Context) {
 		return
 	}
 
+	// Resolve runner type from agent registry (default to claude-agent-sdk for backward compat)
+	runnerTypeID := req.RunnerType
+	if runnerTypeID == "" {
+		runnerTypeID = "claude-agent-sdk"
+	}
+	var registryEnvVars map[string]string
+	if registryEntry, err := getRunnerTypeConfig(runnerTypeID); err != nil {
+		log.Printf("Failed to load agent registry for runner type %q: %v", runnerTypeID, err)
+		// Non-fatal: proceed without registry env vars
+	} else if registryEntry == nil {
+		log.Printf("Unknown runner type %q, proceeding without registry env vars", runnerTypeID)
+	} else {
+		registryEnvVars = registryEntry.InternalEnvVars
+	}
+
 	// Validate API keys are configured before creating session
 	vertexEnabled := os.Getenv("CLAUDE_CODE_USE_VERTEX") == "1"
 	if !vertexEnabled {
@@ -636,6 +651,10 @@ func CreateSession(c *gin.Context) {
 
 	// Optional environment variables passthrough (always, independent of git config presence)
 	envVars := make(map[string]string)
+	// Merge registry internalEnvVars first (user-provided vars take precedence)
+	for k, v := range registryEnvVars {
+		envVars[k] = v
+	}
 	for k, v := range req.EnvironmentVariables {
 		envVars[k] = v
 	}

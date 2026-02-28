@@ -193,6 +193,7 @@ export type CreateAgenticSessionRequest = {
 	repos?: SessionRepo[];
 	labels?: Record<string, string>;
 	annotations?: Record<string, string>;
+	runnerType?: string;
 };
 
 export type AgentPersona = {

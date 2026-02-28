@@ -93,7 +93,9 @@ import {
   useReposStatus,
   useCurrentUser,
   sessionKeys,
+  useRunnerTypes,
 } from "@/services/queries";
+import { useCapabilities } from "@/services/queries/use-capabilities";
 import {
   useWorkspaceList,
 } from "@/services/queries/use-workspace";
@@ -229,6 +231,17 @@ export default function ProjectSessionDetailPage({
     sessionName,
     phase === "Running" // Only poll when session is running
   );
+
+  // Fetch runner capabilities and derive agent display name
+  const { data: capabilities } = useCapabilities(projectName, sessionName, phase === "Running");
+  const { data: runnerTypes } = useRunnerTypes();
+  const agentName = useMemo(() => {
+    if (capabilities?.framework && runnerTypes) {
+      const matched = runnerTypes.find((rt) => rt.id === capabilities.framework);
+      if (matched) return matched.displayName;
+    }
+    return undefined;
+  }, [capabilities?.framework, runnerTypes]);
 
   // Track the current Langfuse trace ID for feedback association
   const [langfuseTraceId, setLangfuseTraceId] = useState<string | null>(null);
@@ -2579,6 +2592,7 @@ export default function ProjectSessionDetailPage({
                         onCancelQueuedMessage={sessionQueue.cancelMessage}
                         onUpdateQueuedMessage={sessionQueue.updateMessage}
                         onClearQueue={sessionQueue.clearMessages}
+                        agentName={agentName}
                         welcomeExperienceComponent={
                           <WelcomeExperience
                             ootbWorkflows={ootbWorkflows}
@@ -2647,6 +2661,7 @@ export default function ProjectSessionDetailPage({
                           onContinue={handleContinue}
                           workflowMetadata={workflowMetadata}
                           onCommandClick={handleCommandClick}
+                          agentName={agentName}
                           isRunActive={isRunActive}
                           showWelcomeExperience={session?.status?.phase === "Running"}
                           activeWorkflow={workflowManagement.activeWorkflow}

@@ -34,10 +34,11 @@ import {
 } from "@/components/ui/select";
 import type { CreateAgenticSessionRequest } from "@/types/agentic-session";
 import { useCreateSession } from "@/services/queries/use-sessions";
+import { useRunnerTypes } from "@/services/queries/use-runner-types";
 import { useIntegrationsStatus } from "@/services/queries/use-integrations";
 import { errorToast } from "@/hooks/use-toast";
 
-const models = [
+const fallbackModels = [
   { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
   { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
@@ -46,6 +47,7 @@ const models = [
 
 const formSchema = z.object({
   displayName: z.string().max(50).optional(),
+  runnerType: z.string().min(1, "Please select a runner type"),
   model: z.string().min(1, "Please select a model"),
   temperature: z.number().min(0).max(2),
   maxTokens: z.number().min(100).max(8000),
@@ -68,6 +70,7 @@ export function CreateSessionDialog({
   const [open, setOpen] = useState(false);
   const router = useRouter();
   const createSessionMutation = useCreateSession();
+  const { data: runnerTypes } = useRunnerTypes();
 
   const { data: integrationsStatus } = useIntegrationsStatus();
 
@@ -80,6 +83,7 @@ export function CreateSessionDialog({
     resolver: zodResolver(formSchema),
     defaultValues: {
       displayName: "",
+      runnerType: "claude-agent-sdk",
       model: "claude-sonnet-4-5",
       temperature: 0.7,
       maxTokens: 4000,
@@ -87,10 +91,26 @@ export function CreateSessionDialog({
     },
   });
 
+  const selectedRunnerType = form.watch("runnerType");
+
+  // Derive the available models from the selected runner type
+  const selectedRunner = runnerTypes?.find((rt) => rt.id === selectedRunnerType);
+  const availableModels = selectedRunner?.models ?? fallbackModels;
+
+  const handleRunnerTypeChange = (value: string, onChange: (v: string) => void) => {
+    onChange(value);
+    const runner = runnerTypes?.find((rt) => rt.id === value);
+    if (runner) {
+      // Reset model to the runner's default
+      form.setValue("model", runner.defaultModel);
+    }
+  };
+
   const onSubmit = async (values: FormValues) => {
     if (!projectName) return;
 
     const request: CreateAgenticSessionRequest = {
+      runnerType: values.runnerType,
       llmSettings: {
         model: values.model,
         temperature: values.temperature,
@@ -165,6 +185,42 @@ export function CreateSessionDialog({
                 )}
               />
 
+              {/* Runner Type Selection */}
+              <FormField
+                control={form.control}
+                name="runnerType"
+                render={({ field }) => (
+                  <FormItem className="w-full">
+                    <FormLabel>Runner Type</FormLabel>
+                    <Select
+                      onValueChange={(v) => handleRunnerTypeChange(v, field.onChange)}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select a runner type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {runnerTypes?.map((rt) => (
+                          <SelectItem key={rt.id} value={rt.id}>
+                            {rt.displayName}
+                          </SelectItem>
+                        )) ?? (
+                          <SelectItem value="claude-agent-sdk">Claude Agent SDK</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {selectedRunner && (
+                      <p className="text-xs text-muted-foreground">
+                        {selectedRunner.description}
+                      </p>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               {/* Model Selection */}
               <FormField
                 control={form.control}
@@ -172,14 +228,14 @@ export function CreateSessionDialog({
                 render={({ field }) => (
                   <FormItem className="w-full">
                     <FormLabel>Model</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Select a model" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {models.map((m) => (
+                        {availableModels.map((m) => (
                           <SelectItem key={m.value} value={m.value}>
                             {m.label}
                           </SelectItem>

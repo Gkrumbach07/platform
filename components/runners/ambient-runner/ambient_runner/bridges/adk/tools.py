@@ -6,7 +6,6 @@ Google ADK ``FunctionTool`` instances.
 """
 
 import logging
-import os
 import time as _time
 from typing import Any
 

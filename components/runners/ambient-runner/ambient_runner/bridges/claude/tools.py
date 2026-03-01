@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ambient_runner.bridge import TOOL_REFRESH_MIN_INTERVAL_SEC
 from ambient_runner.platform.prompts import (
     REFRESH_CREDENTIALS_TOOL_DESCRIPTION,
     RESTART_TOOL_DESCRIPTION,
@@ -68,9 +69,6 @@ def create_restart_session_tool(adapter_ref, sdk_tool_decorator):
 # ------------------------------------------------------------------
 # Credential refresh tool
 # ------------------------------------------------------------------
-
-
-from ambient_runner.bridge import TOOL_REFRESH_MIN_INTERVAL_SEC
 
 
 def create_refresh_credentials_tool(context_ref, sdk_tool_decorator):

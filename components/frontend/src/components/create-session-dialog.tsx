@@ -211,7 +211,7 @@ export function CreateSessionDialog({
                             {rt.displayName}
                           </SelectItem>
                         )) ?? (
-                          <SelectItem value=DEFAULT_RUNNER_TYPE_ID>Claude Agent SDK</SelectItem>
+                          <SelectItem value={DEFAULT_RUNNER_TYPE_ID}>Claude Agent SDK</SelectItem>
                         )}
                       </SelectContent>
                     </Select>

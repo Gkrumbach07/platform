@@ -718,6 +718,9 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	// NOTE: Google email no longer fetched by operator - runner fetches credentials at runtime
 	// Runner will set USER_GOOGLE_EMAIL from backend API response in _populate_runtime_credentials()
 
+	// Parse user-provided environmentVariables once for use across all containers
+	userEnvVars := parseEnvironmentVariables(spec)
+
 	// Get S3 configuration for this project (from project secret or operator defaults)
 	s3Endpoint, s3Bucket, s3AccessKey, s3SecretKey, err := getS3ConfigForProject(sessionNamespace, appConfig)
 	if err != nil {
@@ -826,7 +829,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 
 					// Append user-provided environmentVariables (e.g. RUNNER_TYPE, RUNNER_STATE_DIR)
 					// without overriding reserved vars like SESSION_NAME, S3_ENDPOINT, etc.
-					base = appendNonConflictingEnvVars(base, parseEnvironmentVariables(spec))
+					base = appendNonConflictingEnvVars(base, userEnvVars)
 
 					return base
 				}(),
@@ -1071,22 +1074,10 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 								base = append(base, corev1.EnvVar{Name: "ACTIVE_WORKFLOW_PATH", Value: path})
 							}
 						}
-						// Apply user-provided environmentVariables with replace-if-exists
+					}
+					// Apply user-provided environmentVariables with replace-if-exists
 					// semantics (overrides are intentional for the runner container)
-					for _, ev := range parseEnvironmentVariables(spec) {
-						replaced := false
-						for i := range base {
-							if base[i].Name == ev.Name {
-								base[i].Value = ev.Value
-								replaced = true
-								break
-							}
-						}
-						if !replaced {
-							base = append(base, ev)
-						}
-					}
-					}
+					base = replaceOrAppendEnvVars(base, userEnvVars)
 
 					return base
 				}(),
@@ -1162,7 +1153,7 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 					}
 					// Append user-provided environmentVariables (e.g. RUNNER_TYPE, RUNNER_STATE_DIR)
 					// without overriding reserved vars like SESSION_NAME, S3_ENDPOINT, etc.
-					base = appendNonConflictingEnvVars(base, parseEnvironmentVariables(spec))
+					base = appendNonConflictingEnvVars(base, userEnvVars)
 					return base
 				}(),
 				VolumeMounts: []corev1.VolumeMount{
@@ -1367,15 +1358,32 @@ func parseEnvironmentVariables(spec map[string]interface{}) []corev1.EnvVar {
 // appendNonConflictingEnvVars appends env vars from extra to base, skipping any
 // whose Name already exists in base. This protects reserved variables.
 func appendNonConflictingEnvVars(base []corev1.EnvVar, extra []corev1.EnvVar) []corev1.EnvVar {
+	existing := make(map[string]struct{}, len(base))
+	for _, b := range base {
+		existing[b.Name] = struct{}{}
+	}
 	for _, ev := range extra {
-		exists := false
-		for _, b := range base {
-			if b.Name == ev.Name {
-				exists = true
+		if _, ok := existing[ev.Name]; !ok {
+			base = append(base, ev)
+		}
+	}
+	return base
+}
+
+// replaceOrAppendEnvVars merges extra into base: replaces existing entries by name,
+// or appends if the name does not exist. Used for the runner container where
+// user-provided overrides are intentional.
+func replaceOrAppendEnvVars(base []corev1.EnvVar, extra []corev1.EnvVar) []corev1.EnvVar {
+	for _, ev := range extra {
+		replaced := false
+		for i := range base {
+			if base[i].Name == ev.Name {
+				base[i].Value = ev.Value
+				replaced = true
 				break
 			}
 		}
-		if !exists {
+		if !replaced {
 			base = append(base, ev)
 		}
 	}

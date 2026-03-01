@@ -39,7 +39,6 @@ class ADKBridge(PlatformBridge):
 
         # Platform state (populated by _setup_platform)
         self._ready: bool = False
-        self._first_run: bool = True
         self._configured_model: str = ""
         self._cwd_path: str = ""
         self._last_creds_refresh: float = 0.0
@@ -105,7 +104,6 @@ class ADKBridge(PlatformBridge):
         async for event in wrapped_stream:
             yield event
 
-        self._first_run = False
 
     async def interrupt(self, thread_id: Optional[str] = None) -> None:
         """Interrupt the running agent.
@@ -136,7 +134,6 @@ class ADKBridge(PlatformBridge):
     def mark_dirty(self) -> None:
         """Signal agent rebuild on next run (repo/workflow change)."""
         self._ready = False
-        self._first_run = True
         self._adk_agent = None
         logger.info("ADKBridge: marked dirty — will reinitialise on next run")
 

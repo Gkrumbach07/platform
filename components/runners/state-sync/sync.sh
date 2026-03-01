@@ -92,14 +92,9 @@ sync_to_s3() {
     
     local synced=0
     
-    # Checkpoint SQLite WAL files before syncing framework state to ensure
-    # consistency (e.g. Claude SDK databases, ADK state)
+    # Sync framework state data (with SQLite WAL checkpoint for consistency)
     if [ -d "${FRAMEWORK_DATA_PATH}" ]; then
         find "${FRAMEWORK_DATA_PATH}" -name "*.db" -exec sqlite3 {} "PRAGMA wal_checkpoint(TRUNCATE);" \; 2>/dev/null || true
-    fi
-
-    # Sync framework state data
-    if [ -d "${FRAMEWORK_DATA_PATH}" ]; then
         echo "  Syncing ${RUNNER_STATE_DIR}/..."
         if rclone --config /tmp/.config/rclone/rclone.conf sync "${FRAMEWORK_DATA_PATH}" "${s3_path}/${RUNNER_STATE_DIR}/" \
             --checksum \

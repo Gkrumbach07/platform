@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +15,9 @@ import (
 
 const agentRegistryConfigMapName = "ambient-agent-registry"
 const agentRegistryDataKey = "agent-registry.json"
+
+// DefaultRunnerType is the default runner type when none is specified.
+const DefaultRunnerType = "claude-agent-sdk"
 
 // AgentRegistryEntry represents a runner type entry from the agent registry ConfigMap.
 type AgentRegistryEntry struct {
@@ -41,8 +46,25 @@ type RunnerTypeResponse struct {
 	RequiredSecrets []string      `json:"requiredSecrets"`
 }
 
+// In-memory cache for the agent registry (ConfigMap content changes rarely).
+var (
+	registryCache     []AgentRegistryEntry
+	registryCacheMu   sync.RWMutex
+	registryCacheTime time.Time
+)
+
+const registryCacheTTL = 60 * time.Second
+
 // loadAgentRegistry reads and parses the agent registry ConfigMap using the backend service account.
+// Results are cached in-memory with a TTL since the ConfigMap content rarely changes.
 func loadAgentRegistry() ([]AgentRegistryEntry, error) {
+	registryCacheMu.RLock()
+	if time.Since(registryCacheTime) < registryCacheTTL && registryCache != nil {
+		defer registryCacheMu.RUnlock()
+		return registryCache, nil
+	}
+	registryCacheMu.RUnlock()
+
 	if K8sClientMw == nil {
 		return nil, fmt.Errorf("backend K8s client not initialized")
 	}
@@ -63,6 +85,11 @@ func loadAgentRegistry() ([]AgentRegistryEntry, error) {
 	if err := json.Unmarshal([]byte(rawJSON), &entries); err != nil {
 		return nil, fmt.Errorf("failed to parse agent registry JSON: %w", err)
 	}
+
+	registryCacheMu.Lock()
+	registryCache = entries
+	registryCacheTime = time.Now()
+	registryCacheMu.Unlock()
 
 	return entries, nil
 }

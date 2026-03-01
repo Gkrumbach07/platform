@@ -14,6 +14,8 @@ export interface RunnerType {
   requiredSecrets: string[];
 }
 
+export const DEFAULT_RUNNER_TYPE_ID = "claude-agent-sdk" as const;
+
 export async function getRunnerTypes(): Promise<RunnerType[]> {
   return apiClient.get<RunnerType[]>("/runner-types");
 }

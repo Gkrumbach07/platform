@@ -57,6 +57,17 @@ export function SettingsSection({ projectName }: SettingsSectionProps) {
     [allRequiredSecrets]
   );
 
+  // Pre-compute which runner type owns each secret (avoids O(R*S) in render loop)
+  const secretOwnerMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const rt of runnerTypes ?? []) {
+      for (const s of rt.requiredSecrets) {
+        if (!map.has(s)) map.set(s, rt.displayName);
+      }
+    }
+    return map;
+  }, [runnerTypes]);
+
   // React Query hooks
   const { data: project, isLoading: projectLoading } = useProject(projectName);
   const { data: runnerSecrets } = useSecretsValues(projectName);  // ambient-runner-secrets (ANTHROPIC_API_KEY)
@@ -317,13 +328,12 @@ export function SettingsSection({ projectName }: SettingsSectionProps) {
                   </Alert>
                 )}
                 {allRequiredSecrets.map((secretKey) => {
-                  // Find which runner type requires this secret
-                  const ownerRunner = runnerTypes?.find((rt) => rt.requiredSecrets.includes(secretKey));
+                  const ownerName = secretOwnerMap.get(secretKey);
                   return (
                     <div key={secretKey} className="space-y-2">
                       <Label htmlFor={`runner-secret-${secretKey}`}>{secretKey}</Label>
                       <div className="text-xs text-muted-foreground">
-                        {ownerRunner ? `Required by ${ownerRunner.displayName}` : "Runner API key"} (saved to ambient-runner-secrets)
+                        {ownerName ? `Required by ${ownerName}` : "Runner API key"} (saved to ambient-runner-secrets)
                       </div>
                       <div className="flex items-center gap-2">
                         <Input

@@ -538,7 +538,7 @@ func CreateSession(c *gin.Context) {
 	// Resolve runner type from agent registry (default to claude-agent-sdk for backward compat)
 	runnerTypeID := req.RunnerType
 	if runnerTypeID == "" {
-		runnerTypeID = "claude-agent-sdk"
+		runnerTypeID = DefaultRunnerType
 	}
 	var registryEnvVars map[string]string
 	if registryEntry, err := getRunnerTypeConfig(runnerTypeID); err != nil {

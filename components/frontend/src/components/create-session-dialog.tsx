@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -35,6 +35,7 @@ import {
 import type { CreateAgenticSessionRequest } from "@/types/agentic-session";
 import { useCreateSession } from "@/services/queries/use-sessions";
 import { useRunnerTypes } from "@/services/queries/use-runner-types";
+import { DEFAULT_RUNNER_TYPE_ID } from "@/services/api/runner-types";
 import { useIntegrationsStatus } from "@/services/queries/use-integrations";
 import { errorToast } from "@/hooks/use-toast";
 
@@ -83,7 +84,7 @@ export function CreateSessionDialog({
     resolver: zodResolver(formSchema),
     defaultValues: {
       displayName: "",
-      runnerType: "claude-agent-sdk",
+      runnerType: DEFAULT_RUNNER_TYPE_ID,
       model: "claude-sonnet-4-5",
       temperature: 0.7,
       maxTokens: 4000,
@@ -94,7 +95,10 @@ export function CreateSessionDialog({
   const selectedRunnerType = form.watch("runnerType");
 
   // Derive the available models from the selected runner type
-  const selectedRunner = runnerTypes?.find((rt) => rt.id === selectedRunnerType);
+  const selectedRunner = useMemo(
+    () => runnerTypes?.find((rt) => rt.id === selectedRunnerType),
+    [runnerTypes, selectedRunnerType]
+  );
   const availableModels = selectedRunner?.models ?? fallbackModels;
 
   const handleRunnerTypeChange = (value: string, onChange: (v: string) => void) => {
@@ -207,7 +211,7 @@ export function CreateSessionDialog({
                             {rt.displayName}
                           </SelectItem>
                         )) ?? (
-                          <SelectItem value="claude-agent-sdk">Claude Agent SDK</SelectItem>
+                          <SelectItem value=DEFAULT_RUNNER_TYPE_ID>Claude Agent SDK</SelectItem>
                         )}
                       </SelectContent>
                     </Select>

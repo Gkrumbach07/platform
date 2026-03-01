@@ -56,6 +56,11 @@ from ambient_runner.platform.security_utils import (
 )
 
 
+def is_langfuse_enabled() -> bool:
+    """Check whether Langfuse observability is enabled via env var."""
+    return os.getenv("LANGFUSE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 def _privacy_masking_function(data: Any, **kwargs) -> Any:
     """Mask sensitive user inputs and outputs while preserving usage metrics.
 
@@ -174,12 +179,7 @@ class ObservabilityManager:
         Returns:
             True if Langfuse initialized successfully
         """
-        langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        if not langfuse_enabled:
+        if not is_langfuse_enabled():
             return False
 
         try:

@@ -19,8 +19,10 @@ from ag_ui.core import BaseEvent, RunAgentInput
 from ag_ui_claude_sdk import ClaudeAgentAdapter
 
 from ambient_runner.bridge import (
+    CREDS_REFRESH_INTERVAL_SEC,
     FrameworkCapabilities,
     PlatformBridge,
+    setup_bridge_observability,
 )
 from ambient_runner.bridges.claude.session import SessionManager
 from ambient_runner.platform.context import RunnerContext
@@ -29,9 +31,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum stderr lines kept in ring buffer for error reporting
 _MAX_STDERR_LINES = 50
-
-# Minimum seconds between credential refreshes to avoid hammering the backend
-_CREDS_REFRESH_INTERVAL_SEC = 60
 
 
 class ClaudeBridge(PlatformBridge):
@@ -93,7 +92,7 @@ class ClaudeBridge(PlatformBridge):
 
         # Refresh credentials if stale (tokens may have expired)
         now = time.monotonic()
-        if now - self._last_creds_refresh > _CREDS_REFRESH_INTERVAL_SEC:
+        if now - self._last_creds_refresh > CREDS_REFRESH_INTERVAL_SEC:
             from ambient_runner.platform.auth import populate_runtime_credentials
 
             await populate_runtime_credentials(self._context)
@@ -214,17 +213,9 @@ class ClaudeBridge(PlatformBridge):
             from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
             from ambient_runner.platform.config import load_mcp_config
+            from ambient_runner.platform.workspace import resolve_workspace_paths
 
-            workspace_path = self._context.workspace_path or "/workspace"
-            active_workflow_url = os.getenv("ACTIVE_WORKFLOW_GIT_URL", "").strip()
-            cwd_path = workspace_path
-
-            if active_workflow_url:
-                workflow_name = active_workflow_url.split("/")[-1].removesuffix(".git")
-                workflow_path = os.path.join(workspace_path, "workflows", workflow_name)
-                if os.path.exists(workflow_path):
-                    cwd_path = workflow_path
-
+            cwd_path, _ = resolve_workspace_paths(self._context)
             mcp_servers = load_mcp_config(self._context, cwd_path) or {}
 
             options = ClaudeAgentOptions(
@@ -346,8 +337,8 @@ class ClaudeBridge(PlatformBridge):
         if add_dirs:
             os.environ["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] = "1"
 
-        # Observability (before MCP so rubric tool can access it)
-        await self._setup_observability(configured_model)
+        # Observability (shared helper, before MCP so rubric tool can access it)
+        self._obs = await setup_bridge_observability(self._context, configured_model)
 
         # MCP servers
         from ambient_runner.bridges.claude.mcp import (
@@ -374,36 +365,6 @@ class ClaudeBridge(PlatformBridge):
         self._mcp_servers = mcp_servers
         self._allowed_tools = allowed_tools
         self._system_prompt = system_prompt
-
-    async def _setup_observability(self, configured_model: str) -> None:
-        """Initialise Langfuse observability (best-effort)."""
-        try:
-            from ambient_runner.observability import ObservabilityManager
-
-            from ambient_runner.platform.auth import sanitize_user_context
-
-            raw_user_id = os.getenv("USER_ID", "").strip()
-            raw_user_name = os.getenv("USER_NAME", "").strip()
-            user_id, user_name = sanitize_user_context(raw_user_id, raw_user_name)
-
-            obs = ObservabilityManager(
-                session_id=self._context.session_id,
-                user_id=user_id,
-                user_name=user_name,
-            )
-            await obs.initialize(
-                prompt="(pending)",
-                namespace=self._context.get_env(
-                    "AGENTIC_SESSION_NAMESPACE", "unknown"
-                ),
-                model=configured_model,
-                workflow_url=self._context.get_env("ACTIVE_WORKFLOW_GIT_URL", ""),
-                workflow_branch=self._context.get_env("ACTIVE_WORKFLOW_BRANCH", ""),
-                workflow_path=self._context.get_env("ACTIVE_WORKFLOW_PATH", ""),
-            )
-            self._obs = obs
-        except Exception as e:
-            logger.warning(f"Failed to initialize observability: {e}")
 
     # ------------------------------------------------------------------
     # Private: adapter lifecycle

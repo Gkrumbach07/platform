@@ -9,19 +9,20 @@ Owns the entire ADK session lifecycle:
 """
 
 import logging
-import os
 import time
 from typing import Any, AsyncIterator, Optional
 
 from ag_ui.core import BaseEvent, RunAgentInput
 
-from ambient_runner.bridge import FrameworkCapabilities, PlatformBridge
+from ambient_runner.bridge import (
+    CREDS_REFRESH_INTERVAL_SEC,
+    FrameworkCapabilities,
+    PlatformBridge,
+    setup_bridge_observability,
+)
 from ambient_runner.platform.context import RunnerContext
 
 logger = logging.getLogger(__name__)
-
-# Minimum seconds between credential refreshes
-_CREDS_REFRESH_INTERVAL_SEC = 60
 
 
 class ADKBridge(PlatformBridge):
@@ -73,7 +74,7 @@ class ADKBridge(PlatformBridge):
 
         # Refresh credentials if stale
         now = time.monotonic()
-        if now - self._last_creds_refresh > _CREDS_REFRESH_INTERVAL_SEC:
+        if now - self._last_creds_refresh > CREDS_REFRESH_INTERVAL_SEC:
             from ambient_runner.platform.auth import populate_runtime_credentials
 
             await populate_runtime_credentials(self._context)
@@ -103,7 +104,6 @@ class ADKBridge(PlatformBridge):
 
         async for event in wrapped_stream:
             yield event
-
 
     async def interrupt(self, thread_id: Optional[str] = None) -> None:
         """Interrupt the running agent.
@@ -143,17 +143,8 @@ class ADKBridge(PlatformBridge):
         ADK manages its own tool connections; return a minimal status
         indicating the bridge is active.
         """
-        if not self._context:
-            return {
-                "servers": [],
-                "totalCount": 0,
-                "message": "Context not initialized",
-            }
-        return {
-            "servers": [],
-            "totalCount": 0,
-            "message": "ADK manages tools internally",
-        }
+        msg = "ADK manages tools internally" if self._context else "Context not initialized"
+        return {"servers": [], "totalCount": 0, "message": msg}
 
     # ------------------------------------------------------------------
     # Properties
@@ -208,36 +199,12 @@ class ADKBridge(PlatformBridge):
         # Workspace paths
         cwd_path, _add_dirs = resolve_workspace_paths(self._context)
 
-        # Observability (before agent so tools can access it)
-        await self._setup_observability(configured_model)
+        # Observability (shared helper)
+        self._obs = await setup_bridge_observability(self._context, configured_model)
 
         # Store results
         self._configured_model = configured_model
         self._cwd_path = cwd_path
-
-    async def _setup_observability(self, configured_model: str) -> None:
-        """Initialise Langfuse observability (best-effort)."""
-        try:
-            from ambient_runner.observability import ObservabilityManager
-            from ambient_runner.platform.auth import sanitize_user_context
-
-            raw_user_id = os.getenv("USER_ID", "").strip()
-            raw_user_name = os.getenv("USER_NAME", "").strip()
-            user_id, user_name = sanitize_user_context(raw_user_id, raw_user_name)
-
-            obs = ObservabilityManager(
-                session_id=self._context.session_id,
-                user_id=user_id,
-                user_name=user_name,
-            )
-            await obs.initialize(
-                prompt="(pending)",
-                namespace=self._context.get_env("AGENTIC_SESSION_NAMESPACE", "unknown"),
-                model=configured_model,
-            )
-            self._obs = obs
-        except Exception as e:
-            logger.warning(f"Failed to initialize observability: {e}")
 
     # ------------------------------------------------------------------
     # Private: agent lifecycle

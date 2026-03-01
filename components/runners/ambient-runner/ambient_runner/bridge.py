@@ -23,6 +23,8 @@ Minimal implementation example::
             pass
 """
 
+import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
@@ -30,6 +32,15 @@ from typing import Any, AsyncIterator, Optional
 from ag_ui.core import BaseEvent, RunAgentInput
 
 from ambient_runner.platform.context import RunnerContext
+
+_bridge_logger = logging.getLogger(__name__)
+
+# Minimum seconds between credential refreshes to avoid hammering the backend.
+# Used by both ClaudeBridge and ADKBridge.
+CREDS_REFRESH_INTERVAL_SEC = 60
+
+# Minimum seconds between tool-level credential refresh calls.
+TOOL_REFRESH_MIN_INTERVAL_SEC = 30
 
 
 @dataclass
@@ -162,4 +173,39 @@ class PlatformBridge(ABC):
     @property
     def obs(self) -> Any:
         """The observability manager, or ``None`` if not configured."""
+        return None
+
+
+async def setup_bridge_observability(
+    context: RunnerContext, configured_model: str
+) -> Any:
+    """Initialise Langfuse observability for a bridge (best-effort).
+
+    Shared by ClaudeBridge and ADKBridge. Returns an
+    ``ObservabilityManager`` instance on success, or ``None`` on failure.
+    """
+    try:
+        from ambient_runner.observability import ObservabilityManager
+        from ambient_runner.platform.auth import sanitize_user_context
+
+        raw_user_id = os.getenv("USER_ID", "").strip()
+        raw_user_name = os.getenv("USER_NAME", "").strip()
+        user_id, user_name = sanitize_user_context(raw_user_id, raw_user_name)
+
+        obs = ObservabilityManager(
+            session_id=context.session_id,
+            user_id=user_id,
+            user_name=user_name,
+        )
+        await obs.initialize(
+            prompt="(pending)",
+            namespace=context.get_env("AGENTIC_SESSION_NAMESPACE", "unknown"),
+            model=configured_model,
+            workflow_url=context.get_env("ACTIVE_WORKFLOW_GIT_URL", ""),
+            workflow_branch=context.get_env("ACTIVE_WORKFLOW_BRANCH", ""),
+            workflow_path=context.get_env("ACTIVE_WORKFLOW_PATH", ""),
+        )
+        return obs
+    except Exception as e:
+        _bridge_logger.warning(f"Failed to initialize observability: {e}")
         return None

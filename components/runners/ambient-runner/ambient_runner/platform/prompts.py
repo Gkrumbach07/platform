@@ -231,10 +231,9 @@ def build_workspace_context_prompt(
     prompt += _build_rubric_prompt_section(ambient_config)
 
     # Corrections feedback instructions (only when Langfuse is configured)
-    langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "").strip().lower() in (
-        "1", "true", "yes"
-    )
-    if langfuse_enabled:
+    from ambient_runner.observability import is_langfuse_enabled
+
+    if is_langfuse_enabled():
         prompt += "## Corrections Feedback\n\n"
         prompt += CORRECTION_DETECTION_INSTRUCTIONS
 
@@ -260,3 +259,28 @@ def _build_rubric_prompt_section(ambient_config: dict) -> str:
     section += RUBRIC_EVALUATION_PROCESS
 
     return section
+
+
+def resolve_workspace_prompt(workspace_path: str, cwd_path: str) -> str:
+    """Build the workspace context prompt string.
+
+    Shared helper used by both Claude and ADK bridge prompt builders.
+    Resolves repos config, active workflow, and ambient config, then
+    delegates to ``build_workspace_context_prompt()``.
+    """
+    from ambient_runner.platform.config import get_repos_config, load_ambient_config
+    from ambient_runner.platform.utils import derive_workflow_name
+
+    repos_cfg = get_repos_config()
+    active_workflow_url = (os.getenv("ACTIVE_WORKFLOW_GIT_URL") or "").strip()
+    ambient_config = load_ambient_config(cwd_path) if active_workflow_url else {}
+
+    workflow_name = derive_workflow_name(active_workflow_url) if active_workflow_url else None
+
+    return build_workspace_context_prompt(
+        repos_cfg=repos_cfg,
+        workflow_name=workflow_name,
+        artifacts_path="artifacts",
+        ambient_config=ambient_config,
+        workspace_path=workspace_path,
+    )

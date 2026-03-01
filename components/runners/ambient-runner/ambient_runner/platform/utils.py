@@ -77,6 +77,31 @@ def url_with_token(url: str, token: str) -> str:
         return url
 
 
+def derive_workflow_name(url: str) -> str:
+    """Extract the workflow name from a git URL.
+
+    Returns the last path segment with ``.git`` suffix removed.
+
+    >>> derive_workflow_name("https://github.com/org/my-workflow.git")
+    'my-workflow'
+    """
+    return url.split("/")[-1].removesuffix(".git")
+
+
+def get_active_integrations() -> list[str]:
+    """Return a list of currently active integration names based on env vars."""
+    integrations: list[str] = []
+    if os.getenv("GITHUB_TOKEN"):
+        integrations.append("GitHub")
+    if os.getenv("GITLAB_TOKEN"):
+        integrations.append("GitLab")
+    if os.getenv("JIRA_API_TOKEN"):
+        integrations.append("Jira")
+    if os.getenv("USER_GOOGLE_EMAIL"):
+        integrations.append("Google")
+    return integrations
+
+
 def parse_owner_repo(url: str) -> tuple[str, str, str]:
     """Return (owner, name, host) from various git URL formats.
 

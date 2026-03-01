@@ -70,7 +70,7 @@ def create_restart_session_tool(adapter_ref, sdk_tool_decorator):
 # ------------------------------------------------------------------
 
 
-_TOOL_REFRESH_MIN_INTERVAL_SEC = 30
+from ambient_runner.bridge import TOOL_REFRESH_MIN_INTERVAL_SEC
 
 
 def create_refresh_credentials_tool(context_ref, sdk_tool_decorator):
@@ -95,7 +95,7 @@ def create_refresh_credentials_tool(context_ref, sdk_tool_decorator):
     async def refresh_credentials_tool(args: dict) -> dict:
         """Tool that refreshes all platform credentials (GitHub, Google, etc.)."""
         now = _time.monotonic()
-        if now - last_tool_refresh[0] < _TOOL_REFRESH_MIN_INTERVAL_SEC:
+        if now - last_tool_refresh[0] < TOOL_REFRESH_MIN_INTERVAL_SEC:
             return {
                 "content": [
                     {
@@ -112,17 +112,10 @@ def create_refresh_credentials_tool(context_ref, sdk_tool_decorator):
             last_tool_refresh[0] = _time.monotonic()
             logger.info("Credentials refreshed by Claude via MCP tool")
 
-            refreshed = []
-            if os.getenv("GITHUB_TOKEN"):
-                refreshed.append("GitHub")
-            if os.getenv("GITLAB_TOKEN"):
-                refreshed.append("GitLab")
-            if os.getenv("JIRA_API_TOKEN"):
-                refreshed.append("Jira")
-            if os.getenv("USER_GOOGLE_EMAIL"):
-                refreshed.append("Google")
+            from ambient_runner.platform.utils import get_active_integrations
 
-            summary = ", ".join(refreshed) if refreshed else "none detected"
+            integrations = get_active_integrations()
+            summary = ", ".join(integrations) if integrations else "none detected"
             return {
                 "content": [
                     {
@@ -290,10 +283,9 @@ def _log_to_langfuse(
         langfuse_client = getattr(obs, "langfuse_client", None) if obs else None
 
         if not langfuse_client:
-            langfuse_enabled = os.getenv(
-                "LANGFUSE_ENABLED", ""
-            ).strip().lower() in ("1", "true", "yes")
-            if not langfuse_enabled:
+            from ambient_runner.observability import is_langfuse_enabled
+
+            if not is_langfuse_enabled():
                 return False, "Langfuse not enabled."
 
             from langfuse import Langfuse

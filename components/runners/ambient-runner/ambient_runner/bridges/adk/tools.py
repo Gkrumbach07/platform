@@ -12,9 +12,9 @@ from typing import Any
 
 from google.adk.tools import FunctionTool
 
-logger = logging.getLogger(__name__)
+from ambient_runner.bridge import TOOL_REFRESH_MIN_INTERVAL_SEC
 
-_TOOL_REFRESH_MIN_INTERVAL_SEC = 30
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -23,14 +23,7 @@ _TOOL_REFRESH_MIN_INTERVAL_SEC = 30
 
 
 def create_restart_session_tool(context: Any) -> FunctionTool:
-    """Create a FunctionTool that signals a session restart.
-
-    Args:
-        context: RunnerContext instance (used to set restart flag).
-
-    Returns:
-        ADK FunctionTool.
-    """
+    """Create a FunctionTool that signals a session restart."""
 
     def restart_session(reason: str = "") -> dict:
         """Request a session restart to recover from issues or clear state.
@@ -60,14 +53,7 @@ def create_restart_session_tool(context: Any) -> FunctionTool:
 
 
 def create_refresh_credentials_tool(context: Any) -> FunctionTool:
-    """Create a FunctionTool that refreshes platform credentials.
-
-    Args:
-        context: RunnerContext instance.
-
-    Returns:
-        ADK FunctionTool.
-    """
+    """Create a FunctionTool that refreshes platform credentials."""
     last_refresh = [0.0]
 
     def refresh_credentials() -> dict:
@@ -82,7 +68,7 @@ def create_refresh_credentials_tool(context: Any) -> FunctionTool:
         import asyncio
 
         now = _time.monotonic()
-        if now - last_refresh[0] < _TOOL_REFRESH_MIN_INTERVAL_SEC:
+        if now - last_refresh[0] < TOOL_REFRESH_MIN_INTERVAL_SEC:
             return {
                 "status": "skipped",
                 "message": "Credentials were refreshed recently. Try again later.",
@@ -106,17 +92,10 @@ def create_refresh_credentials_tool(context: Any) -> FunctionTool:
             last_refresh[0] = _time.monotonic()
             logger.info("Credentials refreshed via ADK tool")
 
-            refreshed = []
-            if os.getenv("GITHUB_TOKEN"):
-                refreshed.append("GitHub")
-            if os.getenv("GITLAB_TOKEN"):
-                refreshed.append("GitLab")
-            if os.getenv("JIRA_API_TOKEN"):
-                refreshed.append("Jira")
-            if os.getenv("USER_GOOGLE_EMAIL"):
-                refreshed.append("Google")
+            from ambient_runner.platform.utils import get_active_integrations
 
-            summary = ", ".join(refreshed) if refreshed else "none detected"
+            integrations = get_active_integrations()
+            summary = ", ".join(integrations) if integrations else "none detected"
             return {
                 "status": "ok",
                 "message": f"Credentials refreshed. Active integrations: {summary}.",
@@ -140,25 +119,11 @@ def create_rubric_tool(context: Any, obs: Any) -> FunctionTool | None:
     """Create a FunctionTool for rubric-based evaluation.
 
     Returns None if no rubric content is found.
-
-    Args:
-        context: RunnerContext instance.
-        obs: ObservabilityManager instance.
-
-    Returns:
-        ADK FunctionTool or None.
     """
     from ambient_runner.bridges.claude.tools import load_rubric_content
+    from ambient_runner.platform.workspace import resolve_workspace_paths
 
-    workspace_path = context.workspace_path or "/workspace"
-    active_workflow_url = os.getenv("ACTIVE_WORKFLOW_GIT_URL", "").strip()
-    cwd_path = workspace_path
-
-    if active_workflow_url:
-        workflow_name = active_workflow_url.split("/")[-1].removesuffix(".git")
-        workflow_path = os.path.join(workspace_path, "workflows", workflow_name)
-        if os.path.exists(workflow_path):
-            cwd_path = workflow_path
+    cwd_path, _ = resolve_workspace_paths(context)
 
     rubric_content, _rubric_config = load_rubric_content(cwd_path)
     if not rubric_content:
@@ -208,20 +173,10 @@ def create_corrections_tool(context: Any, obs: Any) -> FunctionTool | None:
     """Create a FunctionTool for logging corrections to Langfuse.
 
     Returns None if Langfuse is not enabled.
-
-    Args:
-        context: RunnerContext instance.
-        obs: ObservabilityManager instance.
-
-    Returns:
-        ADK FunctionTool or None.
     """
-    langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if not langfuse_enabled:
+    from ambient_runner.observability import is_langfuse_enabled
+
+    if not is_langfuse_enabled():
         return None
 
     from ambient_runner.bridges.claude.corrections import (

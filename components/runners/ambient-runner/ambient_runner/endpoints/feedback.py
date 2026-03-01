@@ -94,9 +94,9 @@ async def handle_feedback(event: FeedbackEvent, request: Request):
 
         feedback_comment = "\n".join(comment_parts) if comment_parts else None
 
-        langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+        from ambient_runner.observability import is_langfuse_enabled
 
-        if langfuse_enabled:
+        if is_langfuse_enabled():
             try:
                 from langfuse import Langfuse
 

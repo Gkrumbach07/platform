@@ -14,9 +14,23 @@ _ADK_PREAMBLE = (
 )
 
 
+def _escape_adk_braces(text: str) -> str:
+    """Escape curly braces so ADK doesn't interpret them as session state variables.
+
+    Google ADK's ``instructions_utils`` treats ``{variable}`` in the instruction
+    string as a session-state template. Our workspace context prompt may contain
+    literal braces (e.g. JSON examples, code snippets) that must be escaped.
+    """
+    # ADK uses single braces {var}. Escaping is done by doubling: {{ and }}.
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def build_adk_instruction(workspace_path: str, cwd_path: str) -> str:
     """Build the full instruction string for the ADK LlmAgent.
 
     Combines an ADK preamble with the platform workspace context prompt.
+    Escapes curly braces to prevent ADK from interpreting them as
+    session state template variables.
     """
-    return _ADK_PREAMBLE + resolve_workspace_prompt(workspace_path, cwd_path)
+    workspace_prompt = resolve_workspace_prompt(workspace_path, cwd_path)
+    return _ADK_PREAMBLE + _escape_adk_braces(workspace_prompt)

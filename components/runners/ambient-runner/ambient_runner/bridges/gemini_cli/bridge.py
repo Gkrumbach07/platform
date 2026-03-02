@@ -122,7 +122,7 @@ class GeminiCLIBridge(PlatformBridge):
             from ambient_runner.middleware import tracing_middleware
 
             wrapped_stream = tracing_middleware(
-                adapter.run(input_data, line_stream=_line_stream_with_capture()),
+                self._adapter.run(input_data, line_stream=_line_stream_with_capture()),
                 obs=self._obs,
                 model=self._configured_model,
                 prompt=user_msg,

@@ -108,15 +108,25 @@ func UpdateRunnerSecrets(c *gin.Context) {
 		return
 	}
 
-	// Validate that only allowed keys are present in runner secrets
+	// Validate that only allowed keys are present in runner secrets.
+	// Build the allowlist dynamically from the Agent Registry (if available),
+	// falling back to a static set.
 	allowedKeys := map[string]bool{
 		"ANTHROPIC_API_KEY": true,
-		// Future: "GEMINI_KEY": true, etc.
+		"GOOGLE_API_KEY":    true,
+		"OPENAI_API_KEY":    true,
+	}
+	if entries, err := loadAgentRegistry(); err == nil {
+		for _, entry := range entries {
+			for _, secret := range entry.RequiredSecrets {
+				allowedKeys[secret] = true
+			}
+		}
 	}
 	for key := range req.Data {
 		if !allowedKeys[key] {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Invalid key '%s' for ambient-runner-secrets. Only ANTHROPIC_API_KEY is allowed.", key),
+				"error": fmt.Sprintf("Invalid key '%s' for ambient-runner-secrets. Allowed keys: %v", key, allowedKeys),
 			})
 			return
 		}

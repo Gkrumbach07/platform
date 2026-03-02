@@ -1454,6 +1454,11 @@ export default function ProjectSessionDetailPage({
                     >
                       {session.status?.phase || "Pending"}
                     </Badge>
+                    {agentName && (
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {agentName} / {session.spec.llmSettings.model}
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
@@ -1470,13 +1475,20 @@ export default function ProjectSessionDetailPage({
                       {
                         label: session.spec.displayName || session.metadata.name,
                         rightIcon: (
-                          <Badge
-                            className={getPhaseColor(
-                              session.status?.phase || "Pending",
+                          <span className="flex items-center gap-1.5">
+                            <Badge
+                              className={getPhaseColor(
+                                session.status?.phase || "Pending",
+                              )}
+                            >
+                              {session.status?.phase || "Pending"}
+                            </Badge>
+                            {agentName && (
+                              <Badge variant="outline" className="text-xs font-normal">
+                                {agentName} / {session.spec.llmSettings.model}
+                              </Badge>
                             )}
-                          >
-                            {session.status?.phase || "Pending"}
-                          </Badge>
+                          </span>
                         ),
                       },
                     ]}

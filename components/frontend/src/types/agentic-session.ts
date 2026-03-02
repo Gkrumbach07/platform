@@ -26,6 +26,8 @@ export type AgenticSessionSpec = {
 	inactivityTimeout?: number;
 	displayName?: string;
 	project?: string;
+	// Runner type (e.g. "claude-agent-sdk", "gemini-cli", "codex-sdk")
+	environmentVariables?: Record<string, string>;
 	// Multi-repo support
 	repos?: SessionRepo[];
 	// Active workflow for dynamic workflow switching

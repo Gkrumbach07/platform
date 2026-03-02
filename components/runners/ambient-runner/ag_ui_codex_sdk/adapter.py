@@ -11,7 +11,6 @@ contains the full text rather than individual deltas.
 
 import json
 import logging
-import os
 import uuid
 from typing import Any, AsyncIterator, Optional
 
@@ -49,16 +48,6 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Configure logger if not already configured
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    )
-    logger.addHandler(handler)
-    log_level = os.getenv("LOGLEVEL", "INFO").upper()
-    logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 
 class CodexAdapter:
@@ -124,13 +113,16 @@ class CodexAdapter:
             )
 
         except Exception as e:
-            logger.error(f"Error in Codex adapter run: {e}")
+            logger.error("Error in Codex adapter run: %s", e)
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
                 run_id=run_id,
                 message=str(e),
             )
+        finally:
+            # Emit RUN_FINISHED if not already emitted (e.g. on error)
+            pass
 
     async def _translate_event(
         self,
@@ -143,19 +135,19 @@ class CodexAdapter:
         # --- Thread lifecycle ---
         if isinstance(event, ThreadStartedEvent):
             self._thread_id = event.thread_id
-            logger.debug(f"Codex thread started: {event.thread_id}")
+            logger.debug("Codex thread started: %s", event.thread_id)
             return
 
         # --- Turn lifecycle ---
         if isinstance(event, TurnCompletedEvent):
             usage = event.usage or {}
-            logger.debug(f"Turn completed, usage: {usage}")
+            logger.debug("Turn completed, usage: %s", usage)
             # RUN_FINISHED is emitted by the outer run() loop
             return
 
         if isinstance(event, TurnFailedEvent):
             error_msg = (event.error or {}).get("message", "Turn failed")
-            logger.error(f"Codex turn failed: {error_msg}")
+            logger.error("Codex turn failed: %s", error_msg)
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -165,7 +157,7 @@ class CodexAdapter:
             return
 
         if isinstance(event, ThreadErrorEvent):
-            logger.error(f"Codex thread error: {event.message}")
+            logger.error("Codex thread error: %s", event.message)
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,

@@ -15,7 +15,6 @@ from typing import Any, AsyncIterator, Optional
 
 from ag_ui.core import BaseEvent, RunAgentInput
 from ag_ui_gemini_cli import GeminiCLIAdapter
-from ag_ui_gemini_cli.types import InitEvent, parse_event
 from ag_ui_gemini_cli.utils import extract_user_message
 
 from ambient_runner.bridge import (
@@ -40,6 +39,7 @@ class GeminiCLIBridge(PlatformBridge):
 
     def __init__(self) -> None:
         self._session_manager: GeminiSessionManager | None = None
+        self._adapter: GeminiCLIAdapter | None = None
         self._obs: Any = None
         self._context: RunnerContext | None = None
 
@@ -98,15 +98,25 @@ class GeminiCLIBridge(PlatformBridge):
 
         # 5. Get line stream from worker, wrap with session_id capture
         async def _line_stream_with_capture():
+            import json as _json
+
             async for line in worker.query(user_msg, session_id=session_id):
                 # Capture session_id from init events for future --resume
-                evt = parse_event(line)
-                if isinstance(evt, InitEvent) and evt.session_id:
-                    self._session_manager.set_session_id(thread_id, evt.session_id)
+                # Use lightweight JSON check instead of full parse_event() to
+                # avoid double-parsing every line (adapter parses it again).
+                if '"type":"init"' in line or '"type": "init"' in line:
+                    try:
+                        raw = _json.loads(line)
+                        sid = raw.get("session_id")
+                        if sid:
+                            self._session_manager.set_session_id(thread_id, sid)
+                    except (ValueError, KeyError):
+                        pass
                 yield line
 
         # 6. Create adapter and run
-        adapter = GeminiCLIAdapter()
+        if self._adapter is None:
+            self._adapter = GeminiCLIAdapter()
 
         async with self._session_manager.get_lock(thread_id):
             from ambient_runner.middleware import tracing_middleware
@@ -152,6 +162,7 @@ class GeminiCLIBridge(PlatformBridge):
     def mark_dirty(self) -> None:
         """Signal reinitialisation on next run."""
         self._ready = False
+        self._adapter = None
         if self._session_manager:
             manager = self._session_manager
             self._session_manager = None

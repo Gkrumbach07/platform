@@ -18,6 +18,7 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    MessagesSnapshotEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
@@ -25,6 +26,11 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
@@ -84,6 +90,17 @@ class CodexAdapter:
         thread_id = input_data.thread_id or str(uuid.uuid4())
         run_id = input_data.run_id or str(uuid.uuid4())
         self._tool_call_counter = 0
+        run_messages: list[dict] = []
+
+        # Seed with input messages
+        if input_data.messages:
+            from ag_ui_codex_sdk.utils import extract_user_message
+
+            user_text = extract_user_message(input_data)
+            if user_text:
+                run_messages.append(
+                    {"id": str(uuid.uuid4()), "role": "user", "content": user_text}
+                )
 
         try:
             # 1. Emit RUN_STARTED
@@ -106,7 +123,23 @@ class CodexAdapter:
                 ):
                     yield ag_ui_event
 
-            # 3. Emit RUN_FINISHED at end (if not already emitted by turn.completed)
+                # Track completed agent messages for MESSAGES_SNAPSHOT
+                if isinstance(event, ItemCompletedEvent) and isinstance(
+                    event.item, AgentMessageItem
+                ):
+                    run_messages.append(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "role": "assistant",
+                            "content": event.item.text or "",
+                        }
+                    )
+
+            # 3. Emit MESSAGES_SNAPSHOT + RUN_FINISHED
+            yield MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=run_messages,
+            )
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
                 thread_id=thread_id,
@@ -263,23 +296,26 @@ class CodexAdapter:
         thread_id: str,
         run_id: str,
     ) -> AsyncIterator[BaseEvent]:
-        """Translate reasoning item events to thinking custom events."""
+        """Translate reasoning item events to AG-UI thinking events."""
+        message_id = str(uuid.uuid4())
         if phase == "started":
-            yield CustomEvent(
-                type=EventType.CUSTOM,
-                thread_id=thread_id,
-                run_id=run_id,
-                name="thinking_start",
-                value={},
+            yield ThinkingStartEvent(type=EventType.THINKING_START)
+            yield ThinkingTextMessageStartEvent(
+                type=EventType.THINKING_TEXT_MESSAGE_START,
+                message_id=message_id,
             )
         elif phase == "completed":
-            yield CustomEvent(
-                type=EventType.CUSTOM,
-                thread_id=thread_id,
-                run_id=run_id,
-                name="thinking_end",
-                value={"text": item.text or ""},
+            if item.text:
+                yield ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                    message_id=message_id,
+                    delta=item.text,
+                )
+            yield ThinkingTextMessageEndEvent(
+                type=EventType.THINKING_TEXT_MESSAGE_END,
+                message_id=message_id,
             )
+            yield ThinkingEndEvent(type=EventType.THINKING_END)
 
     async def _handle_command_execution(
         self,

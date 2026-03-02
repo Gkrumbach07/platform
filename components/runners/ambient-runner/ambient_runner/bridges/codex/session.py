@@ -34,7 +34,7 @@ class CodexSessionManager:
             # Read from OPENAI_API_KEY (our secret) or CODEX_API_KEY.
             import os
 
-            api_key = os.getenv("CODEX_API_KEY") or os.getenv("OPENAI_API_KEY")
+            api_key = os.getenv("CODEX_API_KEY", "")
             self._codex = Codex({"api_key": api_key} if api_key else None)
             logger.info("[CodexSessionManager] Codex client initialised (api_key=%s)", "set" if api_key else "unset")
         except ImportError:

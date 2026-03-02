@@ -64,7 +64,7 @@ data:
           {"value": "gpt-5.1-codex-max", "label": "GPT 5.1 Codex Max"},
           {"value": "gpt-5.1-codex-mini", "label": "GPT 5.1 Codex Mini"}
         ],
-        "requiredSecrets": ["OPENAI_API_KEY"],
+        "requiredSecrets": ["CODEX_API_KEY"],
         "internalEnvVars": {
           "RUNNER_TYPE": "codex-sdk",
           "RUNNER_STATE_DIR": ".codex"

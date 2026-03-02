@@ -35,9 +35,9 @@ observability = [
 mcp-atlassian = [
   "mcp-atlassian>=0.11.9",
 ]
-# Install everything for the default Claude runner
+# Install everything for the polymorphic runner
 all = [
-  "ambient-runner[claude,observability,mcp-atlassian]",
+  "ambient-runner[claude,adk,observability,mcp-atlassian]",
 ]
 
 [tool.uv]

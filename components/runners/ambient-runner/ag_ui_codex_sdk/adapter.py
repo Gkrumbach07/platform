@@ -27,6 +27,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 
@@ -306,6 +307,16 @@ class CodexAdapter:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id,
             )
+            result = item.aggregated_output or ""
+            if item.exit_code is not None and item.exit_code != 0:
+                result += f"\n[exit code: {item.exit_code}]"
+            yield ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                message_id=f"{tool_call_id}-result",
+                role="tool",
+                content=result,
+            )
 
     async def _handle_file_change(
         self,
@@ -333,6 +344,14 @@ class CodexAdapter:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id,
             )
+            summary = ", ".join(f"{c.get('kind', '?')} {c.get('path', '?')}" for c in (item.changes or []))
+            yield ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                message_id=f"{tool_call_id}-result",
+                role="tool",
+                content=summary or "file changes applied",
+            )
 
     async def _handle_mcp_tool_call(
         self,
@@ -359,6 +378,18 @@ class CodexAdapter:
             yield ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id,
+            )
+            result = ""
+            if item.result:
+                result = json.dumps(item.result)
+            elif item.error:
+                result = json.dumps(item.error)
+            yield ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                message_id=f"{tool_call_id}-result",
+                role="tool",
+                content=result or "tool call completed",
             )
 
     async def _handle_web_search(

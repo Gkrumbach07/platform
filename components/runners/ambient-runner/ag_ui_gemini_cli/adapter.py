@@ -23,6 +23,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     MessagesSnapshotEvent,
 )
 
@@ -218,6 +219,17 @@ class GeminiCLIAdapter:
                         yield ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
                             tool_call_id=tid,
+                        )
+                        # Emit the tool result so the frontend can display it
+                        result_content = event.output or ""
+                        if event.status == "error" and event.error:
+                            result_content = json.dumps(event.error)
+                        yield ToolCallResultEvent(
+                            type=EventType.TOOL_CALL_RESULT,
+                            tool_call_id=tid,
+                            message_id=f"{tid}-result",
+                            role="tool",
+                            content=result_content,
                         )
                     current_tool_call_id = None
                     continue

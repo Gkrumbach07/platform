@@ -27,7 +27,7 @@ class GeminiSessionWorker:
     ) -> None:
         self._model = model
         self._api_key = api_key
-        self._cwd = cwd or os.getcwd()
+        self._cwd = cwd or os.getenv("WORKSPACE_PATH", "/workspace")
         self._process: Optional[asyncio.subprocess.Process] = None
 
     async def query(
@@ -60,6 +60,9 @@ class GeminiSessionWorker:
 
         env = dict(os.environ)
         if self._api_key:
+            # Gemini CLI expects GEMINI_API_KEY (not GOOGLE_API_KEY)
+            # See: https://github.com/google-gemini/gemini-cli/issues/7557
+            env["GEMINI_API_KEY"] = self._api_key
             env["GOOGLE_API_KEY"] = self._api_key
 
         logger.debug("Spawning Gemini CLI: %s (cwd=%s)", cmd, self._cwd)

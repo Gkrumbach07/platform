@@ -38,50 +38,40 @@ class CodexSessionManager:
                 "Install it with: pip install openai-codex-sdk"
             )
 
-    async def get_or_create_thread(self, thread_id: str, config: Dict[str, Any]) -> Any:
-        """Return an existing thread or create a new one.
-
-        Args:
-            thread_id: Unique identifier for the thread.
-            config: Configuration dict with optional keys:
-                - cwd: Working directory for the Codex session.
-
-        Returns:
-            The Codex thread object.
-        """
+    async def get_or_create_thread(
+        self, thread_id: str, cwd: str = "/workspace", model: str = ""
+    ) -> Any:
+        """Return an existing thread or create a new one."""
         if thread_id in self._threads:
             return self._threads[thread_id]
 
         self._ensure_client()
 
-        thread = self._codex.start_thread(
-            config={
-                "working_directory": config.get("cwd", "/workspace"),
-                "skip_git_repo_check": True,
-            }
-        )
+        options = {
+            "working_directory": cwd,
+            "skip_git_repo_check": True,
+            "approval_policy": "never",
+            "sandbox_mode": "workspace-write",
+        }
+        if model:
+            options["model"] = model
+
+        thread = self._codex.start_thread(options=options)
         self._threads[thread_id] = thread
         logger.info(
-            f"[CodexSessionManager] Created thread for {thread_id} "
-            f"(cwd={config.get('cwd', '/workspace')})"
+            "[CodexSessionManager] Created thread for %s (cwd=%s, model=%s)",
+            thread_id,
+            cwd,
+            model or "default",
         )
         return thread
 
     async def query(
-        self, thread_id: str, prompt: str, config: Dict[str, Any]
+        self, thread_id: str, prompt: str, cwd: str = "/workspace", model: str = ""
     ) -> AsyncIterator[Any]:
-        """Run a prompt on the Codex thread and yield events.
-
-        Args:
-            thread_id: Thread identifier.
-            prompt: User prompt to send.
-            config: Session configuration (passed to get_or_create_thread).
-
-        Yields:
-            Codex SDK events from the streamed response.
-        """
-        thread = await self.get_or_create_thread(thread_id, config)
-        streamed = await thread.run_streamed(prompt)
+        """Run a prompt on the Codex thread and yield events."""
+        thread = await self.get_or_create_thread(thread_id, cwd=cwd, model=model)
+        streamed = thread.run_streamed(prompt)
         async for event in streamed.events:
             yield event
 
@@ -91,5 +81,6 @@ class CodexSessionManager:
         self._threads.clear()
         self._codex = None
         logger.info(
-            f"[CodexSessionManager] Shutdown complete ({thread_count} threads cleared)"
+            "[CodexSessionManager] Shutdown complete (%d threads cleared)",
+            thread_count,
         )

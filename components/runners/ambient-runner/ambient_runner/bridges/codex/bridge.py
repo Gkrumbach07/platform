@@ -94,9 +94,10 @@ class CodexBridge(PlatformBridge):
 
         # 4. Get event stream from Codex thread
         thread_id = input_data.thread_id or self._context.session_id
-        config = {"cwd": self._cwd_path}
 
-        event_stream = self._session_manager.query(thread_id, user_msg, config)
+        event_stream = self._session_manager.query(
+            thread_id, user_msg, cwd=self._cwd_path, model=self._configured_model
+        )
 
         # 5. Run adapter with event stream, wrapped in tracing
         from ambient_runner.middleware import tracing_middleware

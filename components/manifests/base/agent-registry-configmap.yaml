@@ -37,5 +37,37 @@ data:
           "RUNNER_TYPE": "google-adk",
           "RUNNER_STATE_DIR": ".adk"
         }
+      },
+      {
+        "id": "gemini-cli",
+        "displayName": "Gemini CLI",
+        "description": "Google Gemini coding agent with built-in file, bash, and search tools",
+        "defaultModel": "gemini-2.5-flash",
+        "models": [
+          {"value": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
+          {"value": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
+          {"value": "gemini-2.0-flash", "label": "Gemini 2.0 Flash"}
+        ],
+        "requiredSecrets": ["GOOGLE_API_KEY"],
+        "internalEnvVars": {
+          "RUNNER_TYPE": "gemini-cli",
+          "RUNNER_STATE_DIR": ".gemini"
+        }
+      },
+      {
+        "id": "codex-sdk",
+        "displayName": "OpenAI Codex",
+        "description": "OpenAI Codex coding agent with sandbox execution",
+        "defaultModel": "gpt-5.1-codex",
+        "models": [
+          {"value": "gpt-5.1-codex", "label": "GPT 5.1 Codex"},
+          {"value": "gpt-5.1-codex-max", "label": "GPT 5.1 Codex Max"},
+          {"value": "gpt-5.1-codex-mini", "label": "GPT 5.1 Codex Mini"}
+        ],
+        "requiredSecrets": ["OPENAI_API_KEY"],
+        "internalEnvVars": {
+          "RUNNER_TYPE": "codex-sdk",
+          "RUNNER_STATE_DIR": ".codex"
+        }
       }
     ]

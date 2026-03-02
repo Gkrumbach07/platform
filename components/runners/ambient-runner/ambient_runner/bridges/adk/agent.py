@@ -14,6 +14,7 @@ from ag_ui_adk import ADKAgent, AGUIToolset
 from google.adk.agents import LlmAgent
 
 from ambient_runner.bridges.adk.prompts import build_adk_instruction
+from ambient_runner.bridges.adk.file_tools import get_all_file_tools
 from ambient_runner.bridges.adk.tools import (
     create_corrections_tool,
     create_refresh_credentials_tool,
@@ -49,6 +50,9 @@ def create_adk_agent(
 
     # Collect tools
     tools: list = [AGUIToolset()]
+
+    # File system + bash tools
+    tools.extend(get_all_file_tools())
 
     # Platform tools (always available)
     tools.append(create_restart_session_tool(context))

@@ -74,10 +74,9 @@ RUN pip install --no-cache-dir '/app/ambient-runner[all]'
 # Install Gemini CLI (npm package, Node.js already available)
 RUN npm install -g @google/gemini-cli
 
-# Install Codex CLI binary (Rust, via Python wrapper)
+# Install Codex CLI binary (Rust, musl-linked)
 RUN pip install --no-cache-dir openai-codex-sdk && \
-    python -c "from openai_codex_sdk import Codex; Codex.install()" || \
-    echo "Warning: Codex binary install failed (may not be available for this platform)"
+    python -c "from openai_codex_sdk import Codex; Codex.install(filename='codex-x86_64-unknown-linux-musl.tar.gz', overwrite=True)"
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

@@ -71,6 +71,14 @@ COPY ambient-runner /app/ambient-runner
 # Install runner as a package (pulls dependencies including AG-UI SDK)
 RUN pip install --no-cache-dir '/app/ambient-runner[all]'
 
+# Install Gemini CLI (npm package, Node.js already available)
+RUN npm install -g @google/gemini-cli
+
+# Install Codex CLI binary (Rust, via Python wrapper)
+RUN pip install --no-cache-dir openai-codex-sdk && \
+    python -c "from openai_codex_sdk import Codex; Codex.install()" || \
+    echo "Warning: Codex binary install failed (may not be available for this platform)"
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

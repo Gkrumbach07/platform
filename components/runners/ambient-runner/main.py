@@ -12,10 +12,6 @@ def _load_bridge():
         from ambient_runner.bridges.claude import ClaudeBridge
 
         return ClaudeBridge()
-    elif RUNNER_TYPE == "google-adk":
-        from ambient_runner.bridges.adk import ADKBridge
-
-        return ADKBridge()
     elif RUNNER_TYPE == "gemini-cli":
         from ambient_runner.bridges.gemini_cli import GeminiCLIBridge
 

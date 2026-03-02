@@ -1,7 +1,7 @@
 [project]
 name = "ambient-runner"
 version = "0.4.0"
-description = "Polymorphic AG-UI server — Claude Agent SDK, Google ADK, and more"
+description = "Polymorphic AG-UI server — Claude Code, Gemini CLI, Codex SDK"
 readme = "CLAUDE.md"
 requires-python = ">=3.11"
 authors = [
@@ -23,12 +23,6 @@ claude = [
   "anthropic[vertex]>=0.68.0",
   "claude-agent-sdk>=0.1.23",
 ]
-adk = [
-  "ag-ui-adk>=0.1.0",
-  "google-adk>=1.0.0",
-  "google-genai>=1.0.0",
-  "aiosqlite>=0.20.0",
-]
 observability = [
   "langfuse>=3.0.0",
 ]
@@ -40,7 +34,7 @@ mcp-atlassian = [
 ]
 # Install everything for the polymorphic runner
 all = [
-  "ambient-runner[claude,adk,codex,observability,mcp-atlassian]",
+  "ambient-runner[claude,codex,observability,mcp-atlassian]",
 ]
 
 [tool.uv]
@@ -55,7 +49,7 @@ dev-dependencies = [
 
 [tool.setuptools]
 py-modules = ["main"]
-packages = ["ag_ui_claude_sdk", "ag_ui_gemini_cli", "ag_ui_codex_sdk", "ambient_runner", "ambient_runner.endpoints", "ambient_runner.middleware", "ambient_runner.platform", "ambient_runner.bridges", "ambient_runner.bridges.claude", "ambient_runner.bridges.langgraph", "ambient_runner.bridges.adk", "ambient_runner.bridges.gemini_cli", "ambient_runner.bridges.codex"]
+packages = ["ag_ui_claude_sdk", "ag_ui_gemini_cli", "ag_ui_codex_sdk", "ambient_runner", "ambient_runner.endpoints", "ambient_runner.middleware", "ambient_runner.platform", "ambient_runner.bridges", "ambient_runner.bridges.claude", "ambient_runner.bridges.langgraph", "ambient_runner.bridges.gemini_cli", "ambient_runner.bridges.codex"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

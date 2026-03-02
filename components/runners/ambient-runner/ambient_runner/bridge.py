@@ -36,7 +36,7 @@ from ambient_runner.platform.context import RunnerContext
 _bridge_logger = logging.getLogger(__name__)
 
 # Minimum seconds between credential refreshes to avoid hammering the backend.
-# Used by both ClaudeBridge and ADKBridge.
+# Used by all bridge implementations.
 CREDS_REFRESH_INTERVAL_SEC = 60
 
 # Minimum seconds between tool-level credential refresh calls.
@@ -181,7 +181,7 @@ async def setup_bridge_observability(
 ) -> Any:
     """Initialise Langfuse observability for a bridge (best-effort).
 
-    Shared by ClaudeBridge and ADKBridge. Returns an
+    Shared by all bridge implementations. Returns an
     ``ObservabilityManager`` instance on success, or ``None`` on failure.
     """
     try:

@@ -43,10 +43,10 @@ class CodexSessionManager:
                 "Install it with: pip install openai-codex-sdk"
             )
 
-    async def get_or_create_thread(
+    def get_or_create_thread(
         self, thread_id: str, cwd: str = "/workspace", model: str = ""
     ) -> Any:
-        """Return an existing thread or create a new one."""
+        """Return an existing thread or create a new one (synchronous)."""
         if thread_id in self._threads:
             return self._threads[thread_id]
 
@@ -75,10 +75,16 @@ class CodexSessionManager:
         self, thread_id: str, prompt: str, cwd: str = "/workspace", model: str = ""
     ) -> AsyncIterator[Any]:
         """Run a prompt on the Codex thread and yield events."""
-        thread = await self.get_or_create_thread(thread_id, cwd=cwd, model=model)
+        thread = self.get_or_create_thread(thread_id, cwd=cwd, model=model)
+        logger.info("[CodexSessionManager] Calling run_streamed for thread=%s prompt=%s", thread_id, prompt[:50])
         streamed = await thread.run_streamed(prompt)
+        logger.info("[CodexSessionManager] Got StreamedTurn, iterating events...")
+        event_count = 0
         async for event in streamed.events:
+            event_count += 1
+            logger.info("[CodexSessionManager] Event #%d: %s", event_count, type(event).__name__)
             yield event
+        logger.info("[CodexSessionManager] Stream ended after %d events", event_count)
 
     async def shutdown(self) -> None:
         """Clean up all threads and release the client."""

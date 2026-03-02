@@ -23,10 +23,12 @@ class GeminiSessionWorker:
         *,
         model: str,
         api_key: str = "",
+        use_vertex: bool = False,
         cwd: str = "",
     ) -> None:
         self._model = model
         self._api_key = api_key
+        self._use_vertex = use_vertex
         self._cwd = cwd or os.getenv("WORKSPACE_PATH", "/workspace")
         self._process: Optional[asyncio.subprocess.Process] = None
 
@@ -59,8 +61,14 @@ class GeminiSessionWorker:
             cmd.extend(["--resume", session_id])
 
         env = dict(os.environ)
-        if self._api_key:
-            # Gemini CLI expects GEMINI_API_KEY (not GOOGLE_API_KEY)
+        if self._use_vertex:
+            # Vertex AI mode: ensure API keys are NOT set (they take precedence
+            # and bypass Vertex). GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION,
+            # and GOOGLE_APPLICATION_CREDENTIALS should already be in os.environ.
+            env.pop("GEMINI_API_KEY", None)
+            env.pop("GOOGLE_API_KEY", None)
+        elif self._api_key:
+            # API key mode: Gemini CLI expects GEMINI_API_KEY
             # See: https://github.com/google-gemini/gemini-cli/issues/7557
             env["GEMINI_API_KEY"] = self._api_key
             env["GOOGLE_API_KEY"] = self._api_key
@@ -137,12 +145,13 @@ class GeminiSessionManager:
         *,
         model: str,
         api_key: str = "",
+        use_vertex: bool = False,
         cwd: str = "",
     ) -> GeminiSessionWorker:
         """Return a worker for *thread_id*, creating one if needed."""
         if thread_id not in self._workers:
             self._workers[thread_id] = GeminiSessionWorker(
-                model=model, api_key=api_key, cwd=cwd
+                model=model, api_key=api_key, use_vertex=use_vertex, cwd=cwd
             )
             logger.debug("Created GeminiSessionWorker for thread=%s", thread_id)
         return self._workers[thread_id]

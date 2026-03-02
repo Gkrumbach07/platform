@@ -47,6 +47,7 @@ class GeminiCLIBridge(PlatformBridge):
         self._ready: bool = False
         self._configured_model: str = ""
         self._api_key: str = ""
+        self._use_vertex: bool = False
         self._cwd_path: str = ""
         self._last_creds_refresh: float = 0.0
 
@@ -90,6 +91,7 @@ class GeminiCLIBridge(PlatformBridge):
             thread_id,
             model=self._configured_model,
             api_key=self._api_key,
+            use_vertex=self._use_vertex,
             cwd=self._cwd_path,
         )
 
@@ -233,7 +235,7 @@ class GeminiCLIBridge(PlatformBridge):
         from ambient_runner.platform.auth import populate_runtime_credentials
         from ambient_runner.platform.workspace import resolve_workspace_paths
 
-        model, api_key = await setup_gemini_cli_auth(self._context)
+        model, api_key, use_vertex = await setup_gemini_cli_auth(self._context)
 
         # Populate credentials
         await populate_runtime_credentials(self._context)
@@ -248,4 +250,5 @@ class GeminiCLIBridge(PlatformBridge):
         # Store results
         self._configured_model = model
         self._api_key = api_key
+        self._use_vertex = use_vertex
         self._cwd_path = cwd_path

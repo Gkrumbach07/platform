@@ -16,10 +16,6 @@ def _load_bridge():
         from ambient_runner.bridges.gemini_cli import GeminiCLIBridge
 
         return GeminiCLIBridge()
-    elif RUNNER_TYPE == "codex-sdk":
-        from ambient_runner.bridges.codex import CodexBridge
-
-        return CodexBridge()
     else:
         raise ValueError(f"Unknown RUNNER_TYPE={RUNNER_TYPE!r}")
 

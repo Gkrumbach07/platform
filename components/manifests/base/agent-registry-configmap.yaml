@@ -37,21 +37,5 @@ data:
           "RUNNER_TYPE": "gemini-cli",
           "RUNNER_STATE_DIR": ".gemini"
         }
-      },
-      {
-        "id": "codex-sdk",
-        "displayName": "OpenAI Codex",
-        "description": "OpenAI Codex coding agent with sandbox execution",
-        "defaultModel": "gpt-5.1-codex",
-        "models": [
-          {"value": "gpt-5.1-codex", "label": "GPT 5.1 Codex"},
-          {"value": "gpt-5.1-codex-max", "label": "GPT 5.1 Codex Max"},
-          {"value": "gpt-5.1-codex-mini", "label": "GPT 5.1 Codex Mini"}
-        ],
-        "requiredSecrets": ["CODEX_API_KEY"],
-        "internalEnvVars": {
-          "RUNNER_TYPE": "codex-sdk",
-          "RUNNER_STATE_DIR": ".codex"
-        }
       }
     ]

@@ -114,7 +114,6 @@ func UpdateRunnerSecrets(c *gin.Context) {
 	allowedKeys := map[string]bool{
 		"ANTHROPIC_API_KEY": true,
 		"GOOGLE_API_KEY":    true,
-		"CODEX_API_KEY":     true,
 	}
 	if entries, err := loadAgentRegistry(); err == nil {
 		for _, entry := range entries {

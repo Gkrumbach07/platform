@@ -71,7 +71,7 @@ class CodexSessionManager:
     ) -> AsyncIterator[Any]:
         """Run a prompt on the Codex thread and yield events."""
         thread = await self.get_or_create_thread(thread_id, cwd=cwd, model=model)
-        streamed = thread.run_streamed(prompt)
+        streamed = await thread.run_streamed(prompt)
         async for event in streamed.events:
             yield event
 

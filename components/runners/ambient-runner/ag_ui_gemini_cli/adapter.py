@@ -40,6 +40,24 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+def _summarize_event(event: object) -> str:
+    """One-line summary of a Gemini CLI event for logging."""
+    if isinstance(event, InitEvent):
+        return f"session_id={event.session_id} model={event.model}"
+    if isinstance(event, MessageEvent):
+        preview = (event.content or "")[:80]
+        return f"role={event.role} delta={event.delta} content={preview!r}"
+    if isinstance(event, ToolUseEvent):
+        return f"tool={event.tool_name} id={event.tool_id}"
+    if isinstance(event, ToolResultEvent):
+        return f"id={event.tool_id} status={event.status}"
+    if isinstance(event, ErrorEvent):
+        return f"severity={event.severity} msg={event.message[:80]}"
+    if isinstance(event, ResultEvent):
+        return f"status={event.status} stats={event.stats}"
+    return ""
+
+
 class GeminiCLIAdapter:
     """Adapter that translates Gemini CLI JSONL output to AG-UI events.
 
@@ -93,7 +111,10 @@ class GeminiCLIAdapter:
             async for line in line_stream:
                 event = parse_event(line)
                 if event is None:
+                    logger.debug("Gemini CLI: unparseable line: %s", line[:200])
                     continue
+
+                logger.info("Gemini CLI event: type=%s %s", type(event).__name__, _summarize_event(event))
 
                 # ── init ──
                 if isinstance(event, InitEvent):

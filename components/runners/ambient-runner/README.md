@@ -324,4 +324,4 @@ system_prompt_config = {
 - Better alignment with Claude Agent SDK type definitions
 
 **Files Changed:**
-- `components/runners/claude-code-runner/adapter.py` (lines 557-561)
+- `components/runners/ambient-runner/adapter.py` (lines 557-561)

@@ -45,7 +45,7 @@ This directory contains automated workflows for the Ambient Code Platform.
 - Frontend: `components/frontend/**`
 - Backend: `components/backend/**`
 - Operator: `components/operator/**`
-- Claude Runner: `components/runners/claude-code-runner/**`
+- Claude Runner: `components/runners/ambient-runner/**`
 
 ---
 

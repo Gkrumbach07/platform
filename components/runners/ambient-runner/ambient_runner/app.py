@@ -38,6 +38,13 @@ from ambient_runner.platform.config import load_ambient_config
 from ambient_runner.platform.context import RunnerContext
 from ambient_runner.platform.utils import parse_owner_repo
 
+# Configure root logger so all ambient_runner.* and ag_ui_* loggers
+# have a handler and respect the LOG_LEVEL env var.
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(levelname)s:%(name)s:%(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 

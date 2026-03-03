@@ -17,7 +17,6 @@ import { useSecretsValues, useUpdateSecrets, useIntegrationSecrets, useUpdateInt
 import { useClusterInfo } from "@/hooks/use-cluster-info";
 import { FeatureFlagsSection } from "./feature-flags-section";
 import { useMemo } from "react";
-import { useRunnerTypes } from "@/services/queries/use-runner-types";
 
 type SettingsSectionProps = {
   projectName: string;
@@ -39,31 +38,28 @@ export function SettingsSection({ projectName }: SettingsSectionProps) {
   const [showS3SecretKey, setShowS3SecretKey] = useState<boolean>(false);
   const [s3Expanded, setS3Expanded] = useState<boolean>(false);
 
-  // Derive all required secret keys from runner types
-  const { data: runnerTypes } = useRunnerTypes();
-  const allRequiredSecrets = useMemo(() => {
-    if (!runnerTypes) return ["ANTHROPIC_API_KEY"];
-    const secretSet = new Set<string>();
-    for (const rt of runnerTypes) {
-      for (const s of rt.requiredSecrets) {
-        secretSet.add(s);
-      }
-    }
-    return Array.from(secretSet);
-  }, [runnerTypes]);
+  // Runner API key definitions — static list of supported secrets
+  // with descriptions. Not derived from ConfigMap since secrets
+  // depend on auth mode (API key vs Vertex), not just runner type.
+  const RUNNER_API_KEYS = useMemo(() => [
+    { key: "ANTHROPIC_API_KEY", label: "Claude Code" },
+    { key: "GOOGLE_API_KEY", label: "Gemini CLI" },
+  ] as const, []);
+
+  const allRequiredSecrets = useMemo(
+    () => RUNNER_API_KEYS.map(k => k.key),
+    [RUNNER_API_KEYS]
+  );
 
   const FIXED_KEYS = useMemo(
     () => [...allRequiredSecrets, "STORAGE_MODE", "S3_ENDPOINT", "S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"],
     [allRequiredSecrets]
   );
 
-  // Pre-compute which runner type owns each secret (avoids O(R*S) in render loop)
   const secretOwnerMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const rt of runnerTypes ?? []) {
-      for (const s of rt.requiredSecrets) {
-        if (!map.has(s)) map.set(s, rt.displayName);
-      }
+    for (const k of RUNNER_API_KEYS) {
+      map.set(k.key, k.label);
     }
     return map;
   }, [runnerTypes]);

@@ -11,7 +11,6 @@ export interface RunnerType {
   description: string;
   defaultModel: string;
   models: RunnerModel[];
-  requiredSecrets: string[];
 }
 
 export const DEFAULT_RUNNER_TYPE_ID = "claude-agent-sdk" as const;

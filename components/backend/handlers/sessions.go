@@ -550,15 +550,8 @@ func CreateSession(c *gin.Context) {
 		return
 	}
 
-	var registryEnvVars map[string]string
-	if registryEntry, err := getRunnerTypeConfig(runnerTypeID); err != nil {
-		log.Printf("Failed to load agent registry for runner type %q: %v", runnerTypeID, err)
-		// Non-fatal: proceed without registry env vars
-	} else if registryEntry == nil {
-		log.Printf("Unknown runner type %q, proceeding without registry env vars", runnerTypeID)
-	} else {
-		registryEnvVars = registryEntry.InternalEnvVars
-	}
+	// Derive internal env vars from runner ID (not from ConfigMap)
+	registryEnvVars := getRunnerInternalEnvVars(runnerTypeID)
 
 	// Validate API keys are configured before creating session.
 	// For Claude with Vertex AI, skip secret validation (uses service account).

@@ -19,15 +19,20 @@ const agentRegistryDataKey = "agent-registry.json"
 // DefaultRunnerType is the default runner type when none is specified.
 const DefaultRunnerType = "claude-agent-sdk"
 
+// runnerStateDirs maps runner IDs to their state directory.
+// This is a runner implementation detail — the ConfigMap doesn't need to know it.
+var runnerStateDirs = map[string]string{
+	"claude-agent-sdk": ".claude",
+	"gemini-cli":       ".gemini",
+}
+
 // AgentRegistryEntry represents a runner type entry from the agent registry ConfigMap.
 type AgentRegistryEntry struct {
-	ID              string            `json:"id"`
-	DisplayName     string            `json:"displayName"`
-	Description     string            `json:"description"`
-	DefaultModel    string            `json:"defaultModel"`
-	Models          []ModelOption     `json:"models"`
-	RequiredSecrets []string          `json:"requiredSecrets"`
-	InternalEnvVars map[string]string `json:"internalEnvVars,omitempty"`
+	ID           string        `json:"id"`
+	DisplayName  string        `json:"displayName"`
+	Description  string        `json:"description"`
+	DefaultModel string        `json:"defaultModel"`
+	Models       []ModelOption `json:"models"`
 }
 
 // ModelOption represents a model choice within a runner type.
@@ -36,14 +41,13 @@ type ModelOption struct {
 	Label string `json:"label"`
 }
 
-// RunnerTypeResponse is the public API shape (excludes internalEnvVars).
+// RunnerTypeResponse is the public API shape returned to the frontend.
 type RunnerTypeResponse struct {
-	ID              string        `json:"id"`
-	DisplayName     string        `json:"displayName"`
-	Description     string        `json:"description"`
-	DefaultModel    string        `json:"defaultModel"`
-	Models          []ModelOption `json:"models"`
-	RequiredSecrets []string      `json:"requiredSecrets"`
+	ID           string        `json:"id"`
+	DisplayName  string        `json:"displayName"`
+	Description  string        `json:"description"`
+	DefaultModel string        `json:"defaultModel"`
+	Models       []ModelOption `json:"models"`
 }
 
 // In-memory cache for the agent registry (ConfigMap content changes rarely).
@@ -94,20 +98,17 @@ func loadAgentRegistry() ([]AgentRegistryEntry, error) {
 	return entries, nil
 }
 
-// getRunnerTypeConfig returns the full registry entry (including internalEnvVars) for the given runner type ID.
-// Returns nil if not found.
-func getRunnerTypeConfig(runnerTypeID string) (*AgentRegistryEntry, error) {
-	entries, err := loadAgentRegistry()
-	if err != nil {
-		return nil, err
+// getRunnerInternalEnvVars returns the env vars the backend should inject
+// into the CRD for a given runner type. Derived from the runner ID, not
+// stored in the ConfigMap (runner implementation detail).
+func getRunnerInternalEnvVars(runnerTypeID string) map[string]string {
+	envVars := map[string]string{
+		"RUNNER_TYPE": runnerTypeID,
 	}
-
-	for i := range entries {
-		if entries[i].ID == runnerTypeID {
-			return &entries[i], nil
-		}
+	if stateDir, ok := runnerStateDirs[runnerTypeID]; ok {
+		envVars["RUNNER_STATE_DIR"] = stateDir
 	}
-	return nil, nil
+	return envVars
 }
 
 // runnerFlagName returns the feature flag name for a runner type.
@@ -131,8 +132,8 @@ func isRunnerEnabled(runnerID string) bool {
 	return FeatureEnabled(flag)
 }
 
-// GetRunnerTypes handles GET /api/runner-types and returns the list of available runner types
-// with internalEnvVars excluded. Runners gated by feature flags are filtered out.
+// GetRunnerTypes handles GET /api/runner-types and returns the list of available runner types.
+// Runners gated by feature flags are filtered out.
 func GetRunnerTypes(c *gin.Context) {
 	entries, err := loadAgentRegistry()
 	if err != nil {
@@ -147,12 +148,11 @@ func GetRunnerTypes(c *gin.Context) {
 			continue
 		}
 		resp = append(resp, RunnerTypeResponse{
-			ID:              e.ID,
-			DisplayName:     e.DisplayName,
-			Description:     e.Description,
-			DefaultModel:    e.DefaultModel,
-			Models:          e.Models,
-			RequiredSecrets: e.RequiredSecrets,
+			ID:           e.ID,
+			DisplayName:  e.DisplayName,
+			Description:  e.Description,
+			DefaultModel: e.DefaultModel,
+			Models:       e.Models,
 		})
 	}
 

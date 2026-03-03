@@ -11,10 +11,11 @@ logger = logging.getLogger(__name__)
 async def setup_gemini_cli_auth(context: RunnerContext) -> tuple[str, str, bool]:
     """Set up Gemini CLI authentication from environment.
 
-    Reuses the same Vertex AI config as Claude Code:
-    - CLAUDE_CODE_USE_VERTEX=1 enables Vertex for both Claude and Gemini
-    - GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_APPLICATION_CREDENTIALS
-      are shared across both runners (set at operator level)
+    Two modes:
+    - **API key** (default): Uses GEMINI_API_KEY or GOOGLE_API_KEY
+    - **Vertex AI**: When GEMINI_USE_VERTEX=1, uses the same Google Cloud
+      credentials as Claude (GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION,
+      GOOGLE_APPLICATION_CREDENTIALS) — shared secret, separate toggle.
 
     Returns:
         (model, api_key, use_vertex)
@@ -22,7 +23,7 @@ async def setup_gemini_cli_auth(context: RunnerContext) -> tuple[str, str, bool]
     from ag_ui_gemini_cli.config import DEFAULT_MODEL
 
     model = context.get_env("LLM_MODEL", DEFAULT_MODEL).strip()
-    use_vertex = os.getenv("CLAUDE_CODE_USE_VERTEX", "").strip() == "1"
+    use_vertex = os.getenv("GEMINI_USE_VERTEX", "").strip() == "1"
 
     if use_vertex:
         project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()

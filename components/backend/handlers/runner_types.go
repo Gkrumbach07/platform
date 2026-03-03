@@ -110,8 +110,29 @@ func getRunnerTypeConfig(runnerTypeID string) (*AgentRegistryEntry, error) {
 	return nil, nil
 }
 
+// runnerFlagName returns the feature flag name for a runner type.
+// Convention: "runner.<id>.enabled" (e.g. "runner.gemini-cli.enabled").
+// The default runner (claude-agent-sdk) has no flag — always enabled.
+func runnerFlagName(runnerID string) string {
+	if runnerID == DefaultRunnerType {
+		return "" // default runner is always enabled
+	}
+	return "runner." + runnerID + ".enabled"
+}
+
+// isRunnerEnabled checks if a runner type is enabled via feature flags.
+// The default runner is always enabled. Other runners require their
+// feature flag to be explicitly enabled.
+func isRunnerEnabled(runnerID string) bool {
+	flag := runnerFlagName(runnerID)
+	if flag == "" {
+		return true // default runner
+	}
+	return FeatureEnabled(flag)
+}
+
 // GetRunnerTypes handles GET /api/runner-types and returns the list of available runner types
-// with internalEnvVars excluded.
+// with internalEnvVars excluded. Runners gated by feature flags are filtered out.
 func GetRunnerTypes(c *gin.Context) {
 	entries, err := loadAgentRegistry()
 	if err != nil {
@@ -122,6 +143,9 @@ func GetRunnerTypes(c *gin.Context) {
 
 	resp := make([]RunnerTypeResponse, 0, len(entries))
 	for _, e := range entries {
+		if !isRunnerEnabled(e.ID) {
+			continue
+		}
 		resp = append(resp, RunnerTypeResponse{
 			ID:              e.ID,
 			DisplayName:     e.DisplayName,

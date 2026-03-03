@@ -540,6 +540,16 @@ func CreateSession(c *gin.Context) {
 	if runnerTypeID == "" {
 		runnerTypeID = DefaultRunnerType
 	}
+
+	// Check feature flag for non-default runners
+	if !isRunnerEnabled(runnerTypeID) {
+		log.Printf("Session creation blocked: runner type %q is disabled by feature flag", runnerTypeID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Runner type '%s' is not enabled. Contact your platform administrator.", runnerTypeID),
+		})
+		return
+	}
+
 	var registryEnvVars map[string]string
 	if registryEntry, err := getRunnerTypeConfig(runnerTypeID); err != nil {
 		log.Printf("Failed to load agent registry for runner type %q: %v", runnerTypeID, err)

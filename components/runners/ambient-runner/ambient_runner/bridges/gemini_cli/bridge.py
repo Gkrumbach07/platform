@@ -237,22 +237,6 @@ class GeminiCLIBridge(PlatformBridge):
 
         model, api_key, use_vertex = await setup_gemini_cli_auth(self._context)
 
-        # Ensure ~/.gemini/ points to /workspace/.gemini/ so the CLI
-        # finds persisted session state (history, projects, etc.).
-        # Same principle as the operator's SubPath mount for /app/.claude.
-        import os
-        from pathlib import Path
-
-        home_gemini = Path(os.getenv("HOME", "/app")) / ".gemini"
-        workspace_gemini = Path("/workspace/.gemini")
-        workspace_gemini.mkdir(parents=True, exist_ok=True)
-        if not home_gemini.exists():
-            try:
-                home_gemini.symlink_to(workspace_gemini)
-                logger.info("Symlinked %s → %s", home_gemini, workspace_gemini)
-            except OSError as e:
-                logger.warning("Failed to symlink %s: %s", home_gemini, e)
-
         # Populate credentials
         await populate_runtime_credentials(self._context)
         self._last_creds_refresh = time.monotonic()

@@ -721,6 +721,17 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 	// Parse user-provided environmentVariables once for use across all containers
 	userEnvVars := parseEnvironmentVariables(spec)
 
+	// Resolve runner state directory from environment variables (default: .claude)
+	runnerStateDir := ".claude"
+	for _, ev := range userEnvVars {
+		if ev.Name == "RUNNER_STATE_DIR" && ev.Value != "" {
+			runnerStateDir = ev.Value
+			break
+		}
+	}
+	stateSubPath := runnerStateDir
+	stateMountPath := "/app/" + runnerStateDir
+
 	// Get S3 configuration for this project (from project secret or operator defaults)
 	s3Endpoint, s3Bucket, s3AccessKey, s3SecretKey, err := getS3ConfigForProject(sessionNamespace, appConfig)
 	if err != nil {
@@ -835,8 +846,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 				}(),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/workspace"},
-					// SubPath mount for .claude so init container writes to same location as runner
-					{Name: "workspace", MountPath: "/app/.claude", SubPath: ".claude"},
+					// SubPath mount so init container writes to same location as runner
+					{Name: "workspace", MountPath: stateMountPath, SubPath: stateSubPath},
 				},
 			},
 		},
@@ -865,9 +876,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/workspace", ReadOnly: false},
-					// Mount .claude directory for session state persistence (synced to S3)
-					// This enables SDK's built-in resume functionality
-					{Name: "workspace", MountPath: "/app/.claude", SubPath: ".claude", ReadOnly: false},
+					// Mount runner state directory for session persistence (synced to S3)
+					{Name: "workspace", MountPath: stateMountPath, SubPath: stateSubPath, ReadOnly: false},
 				},
 
 				// Lifecycle hook to copy Google credentials from read-only secret mount to writable workspace
@@ -1158,8 +1168,8 @@ func handleAgenticSessionEvent(obj *unstructured.Unstructured) error {
 				}(),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/workspace", ReadOnly: false},
-					// SubPath mount for .claude so sync sidecar reads from same location as runner
-					{Name: "workspace", MountPath: "/app/.claude", SubPath: ".claude", ReadOnly: false},
+					// SubPath mount so sync sidecar reads from same location as runner
+					{Name: "workspace", MountPath: stateMountPath, SubPath: stateSubPath, ReadOnly: false},
 				},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{

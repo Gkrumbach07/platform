@@ -1,5 +1,9 @@
 # Ambient Code Platform
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.28+-blue.svg)](https://kubernetes.io/)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://golang.org/)
+
 > Kubernetes-native AI automation platform for intelligent agentic sessions
 
 ## Overview
